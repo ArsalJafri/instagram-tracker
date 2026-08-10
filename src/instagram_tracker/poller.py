@@ -1,0 +1,46 @@
+"""Polling loop with backoff on provider failures."""
+
+from __future__ import annotations
+
+import logging
+import time
+
+from .pipeline import Pipeline
+from .sources.base import StorySourceError
+
+log = logging.getLogger(__name__)
+
+MAX_BACKOFF_MULTIPLIER = 8
+
+
+class Poller:
+    def __init__(self, pipeline: Pipeline, interval_seconds: int) -> None:
+        self.pipeline = pipeline
+        self.interval_seconds = interval_seconds
+        self._failures = 0
+
+    def run_forever(self, sleep=time.sleep) -> None:
+        log.info("Polling every %ds; press Ctrl+C to stop", self.interval_seconds)
+        while True:
+            self.tick()
+            sleep(self._next_delay())
+
+    def tick(self) -> int:
+        """Run one cycle, swallowing provider errors so the loop survives them."""
+        try:
+            sent = self.pipeline.run_once()
+        except StorySourceError as exc:
+            self._failures += 1
+            log.warning("Story source unavailable (failure %d): %s", self._failures, exc)
+            return 0
+        except Exception:  # a bad payload should not end the run
+            self._failures += 1
+            log.exception("Unexpected error during poll (failure %d)", self._failures)
+            return 0
+
+        self._failures = 0
+        return sent
+
+    def _next_delay(self) -> int:
+        multiplier = min(2**self._failures, MAX_BACKOFF_MULTIPLIER)
+        return self.interval_seconds * multiplier
