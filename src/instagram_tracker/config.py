@@ -23,6 +23,7 @@ class Config:
     process_existing_stories_on_startup: bool
     database_path: Path
     discord_webhook_url: str
+    heartbeat_url: str = ""
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -36,4 +37,5 @@ class Config:
             ),
             database_path=Path(os.getenv("DATABASE_PATH", "./data/job_monitor.db")),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+            heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
         )

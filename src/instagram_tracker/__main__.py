@@ -8,6 +8,7 @@ import sys
 
 from .config import Config
 from .db import Database
+from .heartbeat import Heartbeat
 from .pipeline import build_pipeline
 from .poller import Poller
 
@@ -27,9 +28,16 @@ def main(argv: list[str] | None = None) -> int:
     if not config.discord_webhook_url:
         logging.warning("DISCORD_WEBHOOK_URL is not set; relevant jobs will be logged only")
 
+    if not config.heartbeat_url:
+        logging.warning("HEARTBEAT_URL is not set; a stopped tracker will fail silently")
+
     with Database(config.database_path) as db:
         pipeline = build_pipeline(config, db)
-        poller = Poller(pipeline, config.poll_interval_seconds)
+        poller = Poller(
+            pipeline,
+            config.poll_interval_seconds,
+            heartbeat=Heartbeat(config.heartbeat_url),
+        )
         if args.once:
             poller.tick()
             return 0
