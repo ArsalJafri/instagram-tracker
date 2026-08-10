@@ -115,7 +115,10 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
     return Pipeline(
         config=config,
         db=db,
-        source=build_story_source(config.story_provider),
+        source=build_story_source(
+            config.story_provider,
+            bio_interval_seconds=config.bio_poll_interval_seconds,
+        ),
         fetcher=JobFetcher(),
         notifier=DiscordNotifier(config.discord_webhook_url),
     )
