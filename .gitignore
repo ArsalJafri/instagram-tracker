@@ -11,3 +11,5 @@ data/*
 *.egg-info/
 build/
 dist/
+logs/*
+!logs/.gitkeep

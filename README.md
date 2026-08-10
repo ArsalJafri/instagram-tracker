@@ -44,6 +44,37 @@ python -m instagram_tracker --once
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook; required to notify |
+| `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
+
+## Staying alive
+
+A tracker that dies quietly looks exactly like an account that stopped posting — both
+are an empty Discord channel. Two separate mechanisms cover that.
+
+**Heartbeat.** Set `HEARTBEAT_URL` to a healthchecks.io ping URL. Every successful poll
+pings it; every failed poll pings `<url>/fail`. Configure the check's period to a few
+minutes above `POLL_INTERVAL_SECONDS` and the external service alerts you when the pings
+stop. Ping failures are logged and swallowed, so the monitor can never stop the tracker.
+
+**Supervision.** `deploy/com.arsaljafri.instagram-tracker.plist` runs the poller under
+launchd: started at login, restarted if it crashes, logging to `logs/tracker.log`.
+
+```bash
+cp deploy/com.arsaljafri.instagram-tracker.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.arsaljafri.instagram-tracker.plist
+```
+
+Stop any copy already running in a terminal first — two instances share one SQLite file
+and will race each other. To check on it, or to stop it:
+
+```bash
+launchctl list | grep instagram-tracker
+launchctl unload ~/Library/LaunchAgents/com.arsaljafri.instagram-tracker.plist
+```
+
+This fixes reboots and crashes. It does **not** fix sleep: nothing polls while the lid
+is shut, and launchd simply resumes the agent on wake. Only an always-on host solves
+that; `caffeinate -s` is a stopgap when the laptop is plugged in.
 
 ## Tests
 

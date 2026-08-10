@@ -1,0 +1,34 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.arsaljafri.instagram-tracker</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/arsaljafri/Documents/claude/projects/instagram-tracker/.venv/bin/python</string>
+        <string>-m</string>
+        <string>instagram_tracker</string>
+    </array>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/arsaljafri/Documents/claude/projects/instagram-tracker</string>
+
+    <!-- Start at login and restart if the process dies. Does not survive sleep:
+         launchd resumes the agent on wake, but nothing polls while the lid is shut. -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Do not respawn faster than this if it crashes on startup. -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <key>StandardOutPath</key>
+    <string>/Users/arsaljafri/Documents/claude/projects/instagram-tracker/logs/tracker.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/arsaljafri/Documents/claude/projects/instagram-tracker/logs/tracker.log</string>
+</dict>
+</plist>
