@@ -39,12 +39,39 @@ python -m instagram_tracker --once
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `INSTAGRAM_USERNAME` | `zero2sudo` | Account whose Stories are polled |
-| `STORY_PROVIDER` | `igexport` | Story source adapter |
+| `STORY_PROVIDER` | `igexport` | Story source adapter(s), comma-separated |
+| `BIO_POLL_INTERVAL_SECONDS` | `600` | Minimum gap between direct Instagram profile fetches |
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls |
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook; required to notify |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
+
+## Story sources
+
+`STORY_PROVIDER` accepts several providers, comma-separated. They run together on every
+poll and a partial failure degrades rather than stopping detection — only a total failure
+raises. Links are deduplicated on `canonical_url`, so overlap never double-notifies.
+
+| Provider | Reads | Notes |
+| --- | --- | --- |
+| `igexport` | igexport.com Story feed | Complete, but a third-party dependency |
+| `instagram_bio` | Instagram's public profile endpoint | No auth, no third party; **partial** |
+
+`instagram_bio` needs no session because profile metadata is public — Story *content* is
+not, which is why it cannot replace `igexport`. The account's `bio_links` carry the job
+link it is currently promoting, which is a curated subset of what goes out on Stories.
+Its value is redundancy.
+
+It throttles itself to `BIO_POLL_INTERVAL_SECONDS` regardless of the poll interval, since
+polling Instagram directly from a residential IP at Story cadence invites a soft block.
+
+Bio links have no publish timestamp, so their synthetic Stories use discovery time and a
+`bio:` prefixed id. Exclude that prefix when measuring detection latency:
+
+```sql
+SELECT posted_at, seen_at FROM processed_stories WHERE story_id NOT LIKE 'bio:%';
+```
 
 ## Staying alive
 
