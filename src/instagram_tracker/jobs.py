@@ -142,7 +142,14 @@ def slug_title(url: str) -> str | None:
         words.append(cleaned)
     if not words:
         return None
-    return " ".join(words[-1].split())
+
+    # Requisition ids ride along on the slug ("...Software-Engineer_R-12345").
+    tokens = words[-1].split()
+    while tokens and re.fullmatch(r"[A-Za-z]{0,3}\d+[A-Za-z]?", tokens[-1]):
+        tokens.pop()
+    while tokens and re.fullmatch(r"[A-Za-z]{1,2}", tokens[-1]):
+        tokens.pop()
+    return " ".join(tokens) or None
 
 
 def _find_job_posting(soup: BeautifulSoup) -> dict | None:
