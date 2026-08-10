@@ -85,14 +85,16 @@ def _found(haystack: str, phrases: list[str]) -> list[str]:
 
 def classify(details: JobDetails, url: str) -> Job:
     """Evaluate a fetched posting against the relevance rules."""
-    if not details.title and not details.text.strip():
+    if not details.title:
+        # Nothing was recoverable from the page or the URL, so there is no basis to
+        # judge the role either way. Recorded as unknown rather than rejected.
         return Job(
             title=None,
-            company=None,
-            location=None,
+            company=details.company,
+            location=details.location,
             classification=Classification.UNKNOWN,
             url=url,
-            reason="no title or description could be extracted",
+            reason="no title could be extracted from the page or URL",
         )
 
     # The title carries the signal; the description adds context but also noise

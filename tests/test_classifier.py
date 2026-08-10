@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from instagram_tracker.classifier import classify, is_known_ats
-from instagram_tracker.jobs import JobDetails
+from instagram_tracker.jobs import JobDetails, slug_details
 from instagram_tracker.models import Classification
 
 URL = "https://boards.greenhouse.io/acme/jobs/1"
@@ -78,6 +78,13 @@ def test_negatives_in_the_description_do_not_reject():
 
 def test_unparseable_posting_is_unknown():
     job = classify(JobDetails(None, None, None, None, "", "none"), URL)
+    assert job.classification is Classification.UNKNOWN
+
+
+def test_unfetchable_page_with_an_id_only_slug_is_unknown_not_rejected():
+    """The live sonypicturesjobs link: no page, and a slug that is all identifiers."""
+    url = "https://sonypicturesjobs.com/job/-/-/22978/98897894576"
+    job = classify(slug_details(url), url)
     assert job.classification is Classification.UNKNOWN
 
 
