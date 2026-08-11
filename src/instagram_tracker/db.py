@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     location       TEXT,
     classification TEXT NOT NULL,
     reason         TEXT,
-    evaluated_at   TEXT NOT NULL
+    evaluated_at   TEXT NOT NULL,
+    role_type      TEXT
 );
 
 CREATE TABLE IF NOT EXISTS notifications (
@@ -57,7 +58,19 @@ class Database:
         self.conn = sqlite3.connect(self.path)
         self.conn.row_factory = sqlite3.Row
         self.conn.executescript(SCHEMA)
+        self._migrate()
         self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Bring an existing database up to the current schema.
+
+        CREATE TABLE IF NOT EXISTS leaves already-created tables untouched, so columns
+        added after a database exists have to be applied explicitly. Rows written before
+        a column existed keep NULL, which readers treat as the historical default.
+        """
+        columns = {row["name"] for row in self.conn.execute("PRAGMA table_info(jobs)")}
+        if "role_type" not in columns:
+            self.conn.execute("ALTER TABLE jobs ADD COLUMN role_type TEXT")
 
     def close(self) -> None:
         self.conn.close()
@@ -126,12 +139,22 @@ class Database:
         location: str | None,
         classification: str,
         reason: str = "",
+        role_type: str | None = None,
     ) -> None:
         self.conn.execute(
-            "INSERT OR REPLACE INTO jobs "
-            "(canonical_url, title, company, location, classification, reason, evaluated_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (canonical_url, title, company, location, classification, reason, _now()),
+            "INSERT OR REPLACE INTO jobs (canonical_url, title, company, location, "
+            "classification, reason, evaluated_at, role_type) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                canonical_url,
+                title,
+                company,
+                location,
+                classification,
+                reason,
+                _now(),
+                role_type,
+            ),
         )
         self.conn.commit()
 
