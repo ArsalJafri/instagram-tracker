@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import time
 
+from .health import HealthState
 from .heartbeat import Heartbeat
 from .pipeline import Pipeline
 from .sources.base import StorySourceError
@@ -20,10 +21,12 @@ class Poller:
         pipeline: Pipeline,
         interval_seconds: int,
         heartbeat: Heartbeat | None = None,
+        health: HealthState | None = None,
     ) -> None:
         self.pipeline = pipeline
         self.interval_seconds = interval_seconds
         self.heartbeat = heartbeat
+        self.health = health
         self._failures = 0
 
     def run_forever(self, sleep=time.sleep) -> None:
@@ -40,15 +43,21 @@ class Poller:
             self._failures += 1
             log.warning("Story source unavailable (failure %d): %s", self._failures, exc)
             self._beat(ok=False)
+            if self.health:
+                self.health.record_error(str(exc))
             return 0
-        except Exception:  # a bad payload should not end the run
+        except Exception as exc:  # a bad payload should not end the run
             self._failures += 1
             log.exception("Unexpected error during poll (failure %d)", self._failures)
             self._beat(ok=False)
+            if self.health:
+                self.health.record_error(repr(exc))
             return 0
 
         self._failures = 0
         self._beat(ok=True)
+        if self.health:
+            self.health.record_poll(sent)
         return sent
 
     def _beat(self, ok: bool) -> None:

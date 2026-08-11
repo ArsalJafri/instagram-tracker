@@ -22,13 +22,20 @@ class Config:
     poll_interval_seconds: int
     process_existing_stories_on_startup: bool
     database_path: Path
-    discord_webhook_url: str
+    # Set on hosts with an ephemeral filesystem (Render). Takes precedence over the path.
+    database_url: str = ""
+    discord_webhook_url: str = ""
     # Internships go to their own channel; falls back to the main webhook when unset.
     discord_internship_webhook_url: str = ""
     heartbeat_url: str = ""
     # Instagram is polled directly by the bio source; far slower than the Story cadence
     # so a residential IP does not attract a throttle. 600s did attract one.
     bio_poll_interval_seconds: int = 3600
+
+    @property
+    def database_target(self) -> str | Path:
+        """Where state lives: a Postgres URL when set, otherwise the SQLite path."""
+        return self.database_url or self.database_path
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -41,6 +48,7 @@ class Config:
                 os.getenv("PROCESS_EXISTING_STORIES_ON_STARTUP", "false")
             ),
             database_path=Path(os.getenv("DATABASE_PATH", "./data/job_monitor.db")),
+            database_url=os.getenv("DATABASE_URL", ""),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
             discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),

@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import argparse
 import logging
+import os
 import sys
 
 from .config import Config
-from .db import Database
+from .db import Database, is_postgres_target
+from .health import HealthState, serve_in_background
 from .heartbeat import Heartbeat
 from .pipeline import build_pipeline
 from .poller import Poller
@@ -35,16 +37,27 @@ def main(argv: list[str] | None = None) -> int:
     if not config.heartbeat_url:
         logging.warning("HEARTBEAT_URL is not set; a stopped tracker will fail silently")
 
-    with Database(config.database_path) as db:
+    target = config.database_target
+    logging.info("State: %s", "PostgreSQL" if is_postgres_target(target) else f"SQLite {target}")
+
+    with Database(target) as db:
         pipeline = build_pipeline(config, db)
+        health = HealthState()
         poller = Poller(
             pipeline,
             config.poll_interval_seconds,
             heartbeat=Heartbeat(config.heartbeat_url),
+            health=health,
         )
         if args.once:
             poller.tick()
             return 0
+
+        # PORT is set by the host when the process must answer HTTP to stay alive.
+        # Locally it is absent and no socket is opened.
+        port = os.getenv("PORT")
+        if port:
+            serve_in_background(health, int(port))
         try:
             poller.run_forever()
         except KeyboardInterrupt:
