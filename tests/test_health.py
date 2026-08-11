@@ -83,3 +83,51 @@ def test_the_endpoint_serves_the_snapshot_as_json():
 
 def test_the_poller_works_without_a_health_state():
     assert Poller(FakePipeline(sent=3), 60).tick() == 3
+
+
+# -- stall detection -----------------------------------------------------
+
+
+def test_a_cold_start_is_healthy_before_the_first_poll():
+    # Render checks the health path during deploy; 503 here would fail the deploy.
+    assert HealthState(stale_after_seconds=300).snapshot()["status"] == "ok"
+
+
+def test_a_stalled_poller_reports_unhealthy():
+    health = HealthState(stale_after_seconds=300)
+    health.started_at = health.started_at.replace(year=health.started_at.year - 1)
+
+    assert health.snapshot()["status"] == "stalled"
+    assert health.is_healthy() is False
+
+
+def test_a_recent_poll_clears_the_stall():
+    health = HealthState(stale_after_seconds=300)
+    health.started_at = health.started_at.replace(year=health.started_at.year - 1)
+    health.record_poll(0)
+
+    assert health.snapshot()["status"] == "ok"
+
+
+def test_a_poll_that_is_too_old_still_counts_as_stalled():
+    health = HealthState(stale_after_seconds=300)
+    health.record_poll(0)
+    health.last_poll_at = health.last_poll_at.replace(year=health.last_poll_at.year - 1)
+
+    assert health.snapshot()["status"] == "stalled"
+
+
+def test_the_endpoint_returns_503_when_stalled():
+    health = HealthState(stale_after_seconds=300)
+    health.started_at = health.started_at.replace(year=health.started_at.year - 1)
+    server = serve_in_background(health, 0)
+    try:
+        port = server.server_address[1]
+        try:
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5)
+            raise AssertionError("expected a 503")
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 503
+            assert json.loads(exc.read())["status"] == "stalled"
+    finally:
+        server.shutdown()

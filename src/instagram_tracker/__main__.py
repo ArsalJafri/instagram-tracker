@@ -42,7 +42,11 @@ def main(argv: list[str] | None = None) -> int:
 
     with Database(target) as db:
         pipeline = build_pipeline(config, db)
-        health = HealthState()
+        # Tolerate a few missed polls before reporting unhealthy, with a floor so a
+        # short interval does not make the check hair-trigger.
+        health = HealthState(
+            stale_after_seconds=max(config.poll_interval_seconds * 5, 300)
+        )
         poller = Poller(
             pipeline,
             config.poll_interval_seconds,
