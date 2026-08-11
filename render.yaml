@@ -1,0 +1,40 @@
+# Render blueprint. Deploys as a *web service* rather than a background worker, because
+# free-tier Render offers no workers — only services that bind a port.
+#
+# Free web services spin down after 15 minutes without traffic, so an external pinger
+# (UptimeRobot, every 5 minutes) must hit the health URL to keep polling alive.
+#
+# DATABASE_URL is NOT set here on purpose. Render's own free Postgres expires 30 days
+# after creation, so point this at a free database that does not expire — Neon or
+# Supabase — and set the value in the Render dashboard as a secret.
+services:
+  - type: web
+    name: instagram-tracker
+    runtime: python
+    plan: free
+    region: oregon
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m instagram_tracker
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12"
+      - key: INSTAGRAM_USERNAME
+        value: zero2sudo
+      - key: STORY_PROVIDER
+        value: igexport
+      - key: POLL_INTERVAL_SECONDS
+        value: "60"
+      - key: BIO_POLL_INTERVAL_SECONDS
+        value: "3600"
+      - key: PROCESS_EXISTING_STORIES_ON_STARTUP
+        value: "false"
+      # Set these in the dashboard, never in this file.
+      - key: DATABASE_URL
+        sync: false
+      - key: DISCORD_WEBHOOK_URL
+        sync: false
+      - key: DISCORD_INTERNSHIP_WEBHOOK_URL
+        sync: false
+      - key: HEARTBEAT_URL
+        sync: false

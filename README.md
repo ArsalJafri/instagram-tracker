@@ -44,6 +44,8 @@ python -m instagram_tracker --once
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls |
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
+| `DATABASE_URL` | — | Postgres URL; overrides `DATABASE_PATH` when set |
+| `PORT` | — | Set by the host; when present a health endpoint is served on it |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
 | `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
@@ -134,6 +136,52 @@ launchctl unload ~/Library/LaunchAgents/com.arsaljafri.instagram-tracker.plist
 This fixes reboots and crashes. It does **not** fix sleep: nothing polls while the lid
 is shut, and launchd simply resumes the agent on wake. Only an always-on host solves
 that; `caffeinate -s` is a stopgap when the laptop is plugged in.
+
+## Deploying to Render (free)
+
+Render's free tier runs this at no cost, with two constraints that shape the setup.
+
+**No background workers.** Free covers web services only, so the tracker binds `PORT`
+and serves a JSON status page. Nothing else about the poller changes; when `PORT` is
+absent, as it is locally, no socket is opened at all.
+
+```json
+{ "status": "ok", "polls": 42, "notifications_sent": 3,
+  "seconds_since_last_poll": 17, "last_error": null }
+```
+
+That payload is deliberately more than `200 OK` — a process that is alive but has
+stopped polling is the failure worth catching, so the response reports when it last
+actually worked.
+
+**No persistent disk.** Free services have an ephemeral filesystem, so SQLite would be
+wiped on every redeploy, restart and spin-down. That is not just lost history: an empty
+database makes startup seeding mark every live Story as seen-but-not-notified, silently
+swallowing any job posted just before the restart. Set `DATABASE_URL` and the same code
+runs on Postgres instead.
+
+**Use a database that does not expire.** Render's own free Postgres is deleted 30 days
+after creation. Point `DATABASE_URL` at Neon or Supabase, whose free tiers are permanent.
+
+Steps:
+
+1. Create a free Postgres on **Neon** or **Supabase** and copy its connection URL.
+2. In Render, create a Blueprint from this repo — `render.yaml` describes the service.
+3. Set `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `DISCORD_INTERNSHIP_WEBHOOK_URL` and
+   `HEARTBEAT_URL` in the dashboard. They are marked `sync: false` so they never live
+   in the repo.
+4. Point **UptimeRobot** (free, 50 monitors, 5-minute checks) at the service URL. Without
+   it the service spins down after 15 minutes and stops polling.
+
+Schema is created on first connect, so there is no migration step.
+
+`render.yaml` sets `STORY_PROVIDER=igexport` only, deliberately: `instagram_bio` was
+already being refused from a residential address, and a datacenter IP will fare worse.
+Add it back if Instagram relaxes.
+
+Two limits worth knowing: the free tier allows **750 instance hours per month** and a
+month is ~730 hours, so this covers exactly one always-on service — a second project
+will not fit. And a spin-down that UptimeRobot misses costs about a minute of cold start.
 
 ## Deploying to a Linux host
 
