@@ -1,14 +1,12 @@
 """Relevance rules.
 
-A role qualifies only when all three hold:
-
-* full-time
-* entry-level or new-grad
-* software or computer-science related
+A role qualifies when it is software-related and is either entry-level/new-grad or an
+internship. Internships were originally rejected outright; they are now a first-class
+outcome, tagged with a `RoleType` so they can be routed to their own Discord channel.
 
 Employment type is rarely stated in extractable metadata, so full-time is treated as
-satisfied unless something negates it (internship, contract, part-time). Seniority
-negatives such as "senior" or "manager" disqualify on the entry-level rule instead.
+satisfied unless something negates it (contract, part-time). Seniority negatives such as
+"senior" or "manager" disqualify on the entry-level rule instead.
 """
 
 from __future__ import annotations
@@ -17,7 +15,7 @@ import re
 from urllib.parse import urlparse
 
 from .jobs import JobDetails
-from .models import Classification, Job
+from .models import Classification, Job, RoleType
 
 # The spec's signal lists, split by the rule each one decides.
 # Entry-level / new-grad signals.
@@ -41,6 +39,15 @@ FIELD_SIGNALS = [
     "machine learning engineer",
 ]
 
+# Internship signals. These satisfy the level rule on their own — an internship is
+# entry-level by definition and rarely also says "new grad".
+INTERNSHIP_SIGNALS = [
+    "intern",
+    "internship",
+    "co-op",
+    "coop",
+]
+
 # Seniority negatives — these defeat the entry-level rule.
 SENIORITY_NEGATIVES = [
     "senior",
@@ -50,10 +57,9 @@ SENIORITY_NEGATIVES = [
     "director",
 ]
 
-# Employment-type negatives — these defeat the full-time rule.
+# Employment-type negatives — these defeat the full-time rule. "internship" and "intern"
+# used to live here and now qualify instead.
 EMPLOYMENT_NEGATIVES = [
-    "internship",
-    "intern",
     "contract",
     "part-time",
 ]
@@ -75,8 +81,16 @@ def is_known_ats(url: str) -> bool:
     return any(host == domain or host.endswith("." + domain) for domain in KNOWN_ATS_DOMAINS)
 
 
+# A bounded set of inflections, so "software engineer" matches "software engineering"
+# and "intern" matches "interns" and "internship". Deliberately not open-ended: allowing
+# any trailing letters would make "intern" match "internal" and "international", turning
+# an Internal Tools role into an internship alert.
+INFLECTIONS = r"(?:s|es|ing|ed|ship)?"
+
+
 def _matches(haystack: str, phrase: str) -> bool:
-    return re.search(rf"(?<![a-z0-9]){re.escape(phrase)}(?![a-z0-9])", haystack) is not None
+    pattern = rf"(?<![a-z0-9]){re.escape(phrase)}{INFLECTIONS}(?![a-z0-9])"
+    return re.search(pattern, haystack) is not None
 
 
 def _found(haystack: str, phrases: list[str]) -> list[str]:
@@ -107,6 +121,11 @@ def classify(details: JobDetails, url: str) -> Job:
     employment_hits = _found(title, EMPLOYMENT_NEGATIVES) or _found(
         employment, EMPLOYMENT_NEGATIVES
     )
+    # Read from the title only, for the same reason negatives are: descriptions routinely
+    # mention unrelated internship programmes, which would mislabel full-time roles.
+    internship_hits = _found(title, INTERNSHIP_SIGNALS) or _found(
+        employment, INTERNSHIP_SIGNALS
+    )
 
     if employment_hits:
         return _reject(details, url, f"not full-time: {', '.join(employment_hits)}")
@@ -118,10 +137,17 @@ def classify(details: JobDetails, url: str) -> Job:
         return _reject(details, url, "no software or computer-science signal")
 
     level_hits = _found(body, LEVEL_SIGNALS)
-    if not level_hits:
-        return _reject(details, url, "no entry-level or new-grad signal")
+    if not (level_hits or internship_hits):
+        return _reject(details, url, "no entry-level, new-grad or internship signal")
 
-    reason = f"entry-level ({', '.join(level_hits)}) + software ({', '.join(field_hits)})"
+    if internship_hits:
+        role_type = RoleType.INTERNSHIP
+        qualifier = f"internship ({', '.join(internship_hits)})"
+    else:
+        role_type = RoleType.NEW_GRAD
+        qualifier = f"entry-level ({', '.join(level_hits)})"
+
+    reason = f"{qualifier} + software ({', '.join(field_hits)})"
     if details.source == "slug":
         reason += "; matched from URL slug only"
     return Job(
@@ -131,6 +157,7 @@ def classify(details: JobDetails, url: str) -> Job:
         classification=Classification.RELEVANT,
         url=url,
         reason=reason,
+        role_type=role_type,
     )
 
 

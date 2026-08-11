@@ -31,6 +31,13 @@ class Classification(str, Enum):
     UNKNOWN = "unknown"
 
 
+class RoleType(str, Enum):
+    """Which kind of relevant role this is; decides the Discord channel."""
+
+    NEW_GRAD = "new_grad"
+    INTERNSHIP = "internship"
+
+
 @dataclass(frozen=True)
 class Job:
     title: str | None
@@ -39,3 +46,4 @@ class Job:
     classification: Classification
     url: str
     reason: str = ""
+    role_type: RoleType = RoleType.NEW_GRAD
