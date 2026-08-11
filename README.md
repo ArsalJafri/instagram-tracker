@@ -1,10 +1,14 @@
 # Instagram Tracker
 
 Monitors an Instagram account's Stories and sends a Discord alert whenever a Story links
-to a relevant full-time, entry-level software engineering position.
+to a relevant software engineering role — entry-level/new-grad or an internship, each
+routed to its own channel.
 
 No Instagram login, no OCR, no browser automation — Stories are read from structured
 metadata and job links come from `story_link_stickers`.
+
+Runs on Render's free tier against a hosted Postgres, kept awake and monitored by a
+single UptimeRobot check. See [Deploying to Render](#deploying-to-render-free).
 
 ## Pipeline
 
@@ -97,8 +101,16 @@ running, Instagram began returning:
 ```
 
 The 401 was IP-wide, not app-specific — plain `curl` got it too. The interval was raised
-to 3600s in response. If you see this source failing with 401, back the interval off
-further rather than retrying; the composite keeps `igexport` running meanwhile.
+to 3600s in response.
+
+**In production this source is disabled**, and should stay that way. Deployed to Render
+the same day, it returned **429 Too Many Requests** from a completely fresh datacenter
+IP with no request history. Instagram restricts cloud ranges outright, so it cannot work
+from a host — `STORY_PROVIDER=igexport` is the correct production value. IGExport is a
+proxy and is unaffected.
+
+The composite means either failure is contained: the source logs a warning and IGExport
+carries on. Nothing needs doing when this breaks.
 
 Bio links have no publish timestamp, so their synthetic Stories use discovery time and a
 `bio:` prefixed id. Exclude that prefix when measuring detection latency:
@@ -182,22 +194,33 @@ application missing, and the deploy fails with `No module named instagram_tracke
 Steps:
 
 1. Create a free Postgres on **Neon** or **Supabase** and copy its connection URL.
-2. In Render, create a Blueprint from this repo — `render.yaml` describes the service.
-3. Set `DATABASE_URL`, `DISCORD_WEBHOOK_URL`, `DISCORD_INTERNSHIP_WEBHOOK_URL` and
-   `HEARTBEAT_URL` in the dashboard. They are marked `sync: false` so they never live
-   in the repo.
-4. Point **UptimeRobot** (free, 50 monitors, 5-minute checks) at the service URL. Without
-   it the service spins down after 15 minutes and stops polling.
+   Render's own free Postgres is deleted after 30 days, so do not use it.
+2. In Render: **New → Blueprint** from the top-level dashboard (not from inside a
+   Project, which only offers service types), and `render.yaml` describes everything.
+   Creating a **Web Service** by hand works identically — leave **Root Directory**
+   blank, since the repository root is the project root.
+3. Set `DATABASE_URL`, `DISCORD_WEBHOOK_URL` and `DISCORD_INTERNSHIP_WEBHOOK_URL` in the
+   dashboard. They are marked `sync: false` so they never live in the repo. Leave
+   `HEARTBEAT_URL` unset — step 4 covers it.
+4. Point **UptimeRobot** (free, 50 monitors) at the service URL on a **5-minute**
+   interval.
 
-Schema is created on first connect, so there is no migration step.
+**Use 5 minutes, not 15.** Fifteen is exactly Render's spin-down threshold, leaving no
+margin: checks drift, and one delayed or failed request lets the service sleep. Five
+gives roughly three pings per window, so two can fail harmlessly. It also matches the
+300-second stall threshold, so a stalled poller surfaces in 5–10 minutes instead of up
+to half an hour. Sleep is not merely a slow first request — polling is stopped the whole
+time, and a job posted in that window is never seen.
 
-`render.yaml` sets `STORY_PROVIDER=igexport` only, deliberately: `instagram_bio` was
-already being refused from a residential address, and a datacenter IP will fare worse.
-Add it back if Instagram relaxes.
+Verify the deploy by watching the logs for `State: PostgreSQL`. If it says
+`State: SQLite`, `DATABASE_URL` was not picked up and everything will vanish on the next
+restart. Schema is created on first connect, so there is no migration step. Expect
+`First run: recording N existing Stories without notifying` on the first boot.
 
-Two limits worth knowing: the free tier allows **750 instance hours per month** and a
-month is ~730 hours, so this covers exactly one always-on service — a second project
-will not fit. And a spin-down that UptimeRobot misses costs about a minute of cold start.
+Two limits worth knowing: the free tier allows **750 instance hours per month** against a
+~730-hour month, so this covers exactly one always-on service — a second project will not
+fit. And a spin-down that UptimeRobot misses costs about a minute of cold start on top of
+the polling that never happened.
 
 ## Deploying to a Linux host
 
@@ -280,4 +303,5 @@ pip install -e ".[dev]"
 pytest
 ```
 
-Tests run entirely against fixtures in `fixtures/`; no live network requests.
+Tests run entirely against fixtures in `fixtures/`; no live network requests, and SQLite
+is used throughout so the suite needs no database server.
