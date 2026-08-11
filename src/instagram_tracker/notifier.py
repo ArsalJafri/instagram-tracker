@@ -25,19 +25,31 @@ class DiscordNotifier:
 
     If no internship webhook is configured, internships fall back to the main one rather
     than being dropped — a missing channel should degrade the routing, not the alerting.
+
+    Mentions are per role type and do *not* fall back to each other: pinging the wrong
+    group is worse than pinging nobody.
     """
 
     def __init__(
         self,
         webhook_url: str,
         internship_webhook_url: str = "",
+        mentions: str = "",
+        internship_mentions: str = "",
         timeout: int = 15,
         session: requests.Session | None = None,
     ) -> None:
         self.webhook_url = webhook_url
         self.internship_webhook_url = internship_webhook_url
+        self.mentions = mentions
+        self.internship_mentions = internship_mentions
         self.timeout = timeout
         self.session = session or requests.Session()
+
+    def mentions_for(self, job: Job) -> str:
+        if job.role_type is RoleType.INTERNSHIP:
+            return self.internship_mentions
+        return self.mentions
 
     @property
     def enabled(self) -> bool:
@@ -56,7 +68,7 @@ class DiscordNotifier:
         try:
             response = self.session.post(
                 webhook,
-                json=build_payload(job, username),
+                json=build_payload(job, username, self.mentions_for(job)),
                 timeout=self.timeout,
             )
             response.raise_for_status()
@@ -67,7 +79,25 @@ class DiscordNotifier:
         return True
 
 
-def build_payload(job: Job, username: str) -> dict:
+def allowed_mentions(mentions: str) -> dict:
+    """Whitelist exactly what this message may ping.
+
+    Discord pings nothing that `allowed_mentions` does not permit, so setting it
+    explicitly means a stray character in configuration cannot mass-notify a server.
+    With no mentions configured the message is barred from pinging anything at all.
+    """
+    if not mentions.strip():
+        return {"parse": []}
+
+    parse = ["users", "roles"]
+    lowered = mentions.lower()
+    # Only unlock the broadcast pings when the configuration actually asks for them.
+    if "@everyone" in lowered or "@here" in lowered:
+        parse.append("everyone")
+    return {"parse": parse}
+
+
+def build_payload(job: Job, username: str, mentions: str = "") -> dict:
     fields = []
     if job.company:
         fields.append({"name": "Company", "value": job.company, "inline": True})
@@ -87,4 +117,14 @@ def build_payload(job: Job, username: str) -> dict:
     if fields:
         embed["fields"] = fields
 
-    return {"content": HEADLINE[job.role_type], "embeds": [embed]}
+    # Mentions must live in `content`. Inside an embed they render as blue text and
+    # notify nobody, which would look correct and silently ping no one.
+    content = HEADLINE[job.role_type]
+    if mentions.strip():
+        content = f"{mentions.strip()} {content}"
+
+    return {
+        "content": content,
+        "embeds": [embed],
+        "allowed_mentions": allowed_mentions(mentions),
+    }

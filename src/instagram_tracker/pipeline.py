@@ -124,5 +124,7 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
         notifier=DiscordNotifier(
             config.discord_webhook_url,
             config.discord_internship_webhook_url,
+            mentions=config.discord_mentions,
+            internship_mentions=config.discord_internship_mentions,
         ),
     )

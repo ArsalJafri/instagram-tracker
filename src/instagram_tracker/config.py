@@ -27,6 +27,10 @@ class Config:
     discord_webhook_url: str = ""
     # Internships go to their own channel; falls back to the main webhook when unset.
     discord_internship_webhook_url: str = ""
+    # Raw Discord mention text prepended to each alert, e.g. "<@&123>" for a role.
+    # Independent per role type — these deliberately do not fall back to each other.
+    discord_mentions: str = ""
+    discord_internship_mentions: str = ""
     heartbeat_url: str = ""
     # Instagram is polled directly by the bio source; far slower than the Story cadence
     # so a residential IP does not attract a throttle. 600s did attract one.
@@ -51,6 +55,8 @@ class Config:
             database_url=os.getenv("DATABASE_URL", ""),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
             discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
+            discord_mentions=os.getenv("DISCORD_MENTIONS", ""),
+            discord_internship_mentions=os.getenv("DISCORD_INTERNSHIP_MENTIONS", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
             bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "3600")),
         )
