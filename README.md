@@ -119,10 +119,15 @@ Bio links have no publish timestamp, so their synthetic Stories use discovery ti
 SELECT posted_at, seen_at FROM processed_stories WHERE story_id NOT LIKE 'bio:%';
 ```
 
-## Staying alive
+## Staying alive (local only)
 
 A tracker that dies quietly looks exactly like an account that stopped posting — both
-are an empty Discord channel. Two separate mechanisms cover that.
+are an empty Discord channel. Two mechanisms cover that when running on your own machine.
+
+**In production neither is used.** The 503-on-stall health endpoint plus a single
+UptimeRobot check does the same job, so `HEARTBEAT_URL` stays unset on Render and the
+launchd agent is not installed. This section applies to local development, or to running
+on hardware you own.
 
 **Heartbeat.** Set `HEARTBEAT_URL` to a healthchecks.io ping URL. Every successful poll
 pings it; every failed poll pings `<url>/fail`. Configure the check's period to a few
