@@ -257,6 +257,38 @@ Two limits worth knowing: the free tier allows **750 instance hours per month** 
 fit. And a spin-down that UptimeRobot misses costs about a minute of cold start on top of
 the polling that never happened.
 
+## Verifying it is running
+
+The health endpoint answers this on its own; you do not need logs. Take two readings a
+minute apart:
+
+```bash
+while true; do date +%T; curl -s https://<your-service>.onrender.com/; echo; sleep 60; done
+```
+
+Two numbers together are the proof, and neither is sufficient alone:
+
+- **`uptime_seconds` advancing in step with wall-clock time** means the process did not
+  restart or sleep between readings.
+- **`polls` incrementing** means it is doing work rather than merely answering HTTP.
+
+A low `uptime_seconds` by itself is not a fault — saving any environment variable in
+Render triggers a redeploy, which resets it.
+
+| Symptom | Meaning |
+| --- | --- |
+| `HTTP 503` | Alive but no successful poll in 5 minutes — stall detection firing |
+| Timeout or connection refused | Asleep or down; the first request wakes it after ~1 minute |
+| `polls` unchanged across readings | Stalled, despite returning 200 |
+| `uptime_seconds` repeatedly resetting | Crash looping — read the dashboard logs |
+
+For log lines rather than status, the Render dashboard's **Logs** tab streams live, or
+install the CLI with `brew install render` and run `render help logs` for the current
+syntax.
+
+In practice UptimeRobot makes this unnecessary: it checks every 5 minutes and alerts on
+both a dead service and a 503, which covers "down" and "up but doing nothing".
+
 ## Deploying to a Linux host
 
 `deploy/setup-linux.sh` provisions a fresh Debian/Ubuntu box — venv, dependencies, and a
