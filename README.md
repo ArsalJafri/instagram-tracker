@@ -105,20 +105,45 @@ that; `caffeinate -s` is a stopgap when the laptop is plugged in.
 
 ## Deploying to a Linux host
 
-`deploy/setup-gcp.sh` provisions a fresh Debian/Ubuntu box — venv, dependencies, and a
-systemd service that restarts on failure and starts at boot. Written for a GCP
-`e2-micro` (free tier, `us-west1`/`us-central1`/`us-east1`), but it makes no
-GCP-specific assumptions and works on any Debian-family machine, including a Pi.
+`deploy/setup-linux.sh` provisions a fresh Debian/Ubuntu box — venv, dependencies, and a
+systemd service that restarts on failure and starts at boot. It makes no cloud-specific
+assumptions and works on any Debian-family machine, including a Raspberry Pi.
 
 ```bash
 git clone git@github.com:ArsalJafri/instagram-tracker.git
 cd instagram-tracker
 cp .env.example .env      # then fill in DISCORD_WEBHOOK_URL
-bash deploy/setup-gcp.sh
+bash deploy/setup-linux.sh
 ```
 
 The script refuses to run without a `.env`, and never writes one — secrets stay off the
 repo and out of provisioning.
+
+### Oracle Cloud Always Free
+
+The target host. Unlike GCP, the Always Free allowance **includes a public IPv4**, which
+is what makes it genuinely free rather than free-plus-$3.60/month for the address.
+
+- **Shape:** `VM.Standard.E2.1.Micro` (AMD, 1/8 OCPU, 1GB RAM) is always available and
+  ample — the tracker idles around 51MB. `VM.Standard.A1.Flex` (ARM) gives far more
+  headroom within the Always Free allowance, halved to 2 OCPU / 12GB in June 2026, but
+  ARM capacity is frequently exhausted. Take A1 if you can get it, E2.1.Micro otherwise.
+- **Image:** Canonical Ubuntu or Oracle Linux. The script targets Debian-family, so
+  choose Ubuntu.
+- **Region:** must be your tenancy's home region, or it is not free.
+- **Networking:** no inbound rules are needed beyond SSH. Oracle blocks inbound by
+  default in both the security list and local iptables, which trips people up — but this
+  service only makes outbound connections, so leave all of it alone.
+
+**Idle reclamation is the real risk.** Oracle reclaims Always Free compute when
+95th-percentile CPU *and* network stay below 20% over 7 days. A 60-second poller that
+sleeps in between fits that description exactly. Two mitigations:
+
+1. Upgrade the account to Pay-As-You-Go. Always Free resources stay $0 and reclamation
+   stops applying to the tenancy. Set a $1 budget alert so any real charge surfaces
+   immediately.
+2. Failing that, treat reclamation as a when-not-if and rely on the heartbeat to tell
+   you, since a reclaimed instance dies silently.
 
 **Carry the database across, or don't — but know which.** Copying `data/job_monitor.db`
 preserves notification history and deduplication. Starting fresh is also safe: with
@@ -126,7 +151,7 @@ preserves notification history and deduplication. Starting fresh is also safe: w
 without notifying, so a new host does not replay the last 24 hours.
 
 ```bash
-gcloud compute scp data/job_monitor.db <instance>:~/instagram-tracker/data/ --zone <zone>
+scp data/job_monitor.db ubuntu@<instance-ip>:~/instagram-tracker/data/
 ```
 
 **Stop the old host first.** Two machines with separate databases both notify, so you
@@ -141,6 +166,12 @@ aggressively than residential ones, so `instagram_bio` may return nothing from a
 VM even though it works from home. The setup script runs one verbose cycle and warns if
 that happens. IGExport is unaffected, so the tracker still works — but if the bio source
 is dead on that host, either drop it from `STORY_PROVIDER` or run on home hardware.
+
+Look for this line in the first-run output:
+
+```text
+DEBUG instagram_tracker.sources.instagram_bio: Instagram bio exposed N distinct link(s)
+```
 
 ```bash
 journalctl -u instagram-tracker -f

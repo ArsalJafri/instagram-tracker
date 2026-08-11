@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Provision the tracker on a fresh Debian/Ubuntu VM (GCP e2-micro or any other box).
+# Provision the tracker on a fresh Debian/Ubuntu VM (Oracle Always Free, a Pi, anything).
 #
 # Run this from inside a checkout of the repo, on the VM:
 #
-#     bash deploy/setup-gcp.sh
+#     bash deploy/setup-linux.sh
 #
 # It installs dependencies, builds the venv and registers a systemd service. It never
 # creates or edits .env — secrets are yours to place before running this.
