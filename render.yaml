@@ -13,7 +13,10 @@ services:
     runtime: python
     plan: free
     region: oregon
-    buildCommand: pip install -r requirements.txt
+    # `pip install .` and not `-r requirements.txt`: this is a src/ layout, so the
+    # package must be installed for `python -m instagram_tracker` to resolve. Installing
+    # only the requirements leaves the dependencies present and the app missing.
+    buildCommand: pip install .
     startCommand: python -m instagram_tracker
     healthCheckPath: /
     envVars:

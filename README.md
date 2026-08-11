@@ -173,6 +173,12 @@ dies, but a hosted Postgres will — on restart, idle timeout or a network blip 
 without reconnection the tracker would keep running while silently persisting and
 notifying nothing.
 
+**Build with `pip install .`, not `pip install -r requirements.txt`.** This is a `src/`
+layout, so the package itself must be installed for `python -m instagram_tracker` to
+resolve. Installing only the requirements leaves every dependency present and the
+application missing, and the deploy fails with `No module named instagram_tracker`.
+`pyproject.toml` carries the same dependency list, so one command covers both.
+
 Steps:
 
 1. Create a free Postgres on **Neon** or **Supabase** and copy its connection URL.
