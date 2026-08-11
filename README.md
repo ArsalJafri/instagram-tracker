@@ -64,12 +64,24 @@ internship. Each relevant job is tagged with a `role_type` that decides where it
 | Role type | Signals (title or `employmentType` only) | Channel |
 | --- | --- | --- |
 | `internship` | `intern`, `internship`, `co-op`, `coop` | `DISCORD_INTERNSHIP_WEBHOOK_URL` |
-| `new_grad` | `new grad`, `entry level`, `early career`, `associate`, … | `DISCORD_WEBHOOK_URL` |
+| `new_grad` | `new grad`, `entry level`, `early career`, `associate`, `engineer i/ii`, … | `DISCORD_WEBHOOK_URL` |
 
 Internship signals are read from the title and `employmentType` only, never the
 description — postings routinely mention unrelated internship programmes, which would
 mislabel full-time roles. Seniority negatives still win, so "Senior Software Engineering
-Intern" is rejected. `contract` and `part-time` still reject outright.
+Intern" is rejected. `contract`, `part-time` and schema.org's own `employmentType`
+spellings (`contractor`, `part_time`, `temporary`) all reject outright.
+
+Numbered junior titles count as entry-level — `Software Engineer I/II` is exactly how
+large employers denote it. The signals are scoped to follow a role word (`engineer i`,
+not `i`) so a stray numeral cannot match.
+
+**Unreadable pages become `unknown`, never `not_relevant`.** Client-rendered career sites
+return page chrome as the `<title>` — `JobDetail`, `search`, a vendor name. A title like
+that is worse than none, because it makes the classifier reject confidently when it never
+saw the posting. Page titles that are chrome or a single word are discarded, falling
+through to the URL slug and then to `unknown`. JSON-LD titles are exempt: those are the
+employer's own statement of the role.
 
 Signal matching allows a bounded set of inflections (`s`, `es`, `ing`, `ed`, `ship`), so
 `software engineer` matches "Software Engineering" and `intern` matches "interns" and
