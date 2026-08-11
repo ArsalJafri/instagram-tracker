@@ -40,7 +40,6 @@ def test_relevant_roles(title):
         "Senior Software Engineer",           # seniority
         "Staff Software Engineer, New Grad",  # seniority beats the level signal
         "Engineering Manager",
-        "Software Engineering Intern",        # not full-time
         "New Grad Software Engineer (Contract)",
         "Part-Time Software Developer, Entry Level",
         "Marketing Associate",                # no software signal
@@ -58,7 +57,7 @@ def test_full_time_is_assumed_when_nothing_negates_it():
 
 def test_employment_type_metadata_can_reject():
     job = classify(
-        details("New Grad Software Engineer", employment_type="INTERN"),
+        details("New Grad Software Engineer", employment_type="CONTRACT"),
         URL,
     )
     assert job.classification is Classification.NOT_RELEVANT
