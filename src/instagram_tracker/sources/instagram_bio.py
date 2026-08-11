@@ -42,7 +42,10 @@ WEB_APP_ID = "936619743392459"
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 
 STORY_ID_PREFIX = "bio:"
-DEFAULT_MIN_INTERVAL_SECONDS = 600
+# Raised from 600s on 2026-08-11 after Instagram returned 401 "Please wait a few minutes"
+# and started demanding a login. This source only carries a curated bio link, so hourly
+# costs almost nothing and makes a repeat far less likely.
+DEFAULT_MIN_INTERVAL_SECONDS = 3600
 
 
 class InstagramBioSource(StorySource):

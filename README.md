@@ -40,7 +40,7 @@ python -m instagram_tracker --once
 | --- | --- | --- |
 | `INSTAGRAM_USERNAME` | `zero2sudo` | Account whose Stories are polled |
 | `STORY_PROVIDER` | `igexport` | Story source adapter(s), comma-separated |
-| `BIO_POLL_INTERVAL_SECONDS` | `600` | Minimum gap between direct Instagram profile fetches |
+| `BIO_POLL_INTERVAL_SECONDS` | `3600` | Minimum gap between direct Instagram profile fetches |
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls |
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
@@ -86,7 +86,17 @@ link it is currently promoting, which is a curated subset of what goes out on St
 Its value is redundancy.
 
 It throttles itself to `BIO_POLL_INTERVAL_SECONDS` regardless of the poll interval, since
-polling Instagram directly from a residential IP at Story cadence invites a soft block.
+polling Instagram directly at Story cadence invites a soft block. **This is not
+hypothetical.** On 2026-08-11, at 600s and with two tracker instances accidentally
+running, Instagram began returning:
+
+```json
+{"message":"Please wait a few minutes before you try again.","require_login":true}
+```
+
+The 401 was IP-wide, not app-specific — plain `curl` got it too. The interval was raised
+to 3600s in response. If you see this source failing with 401, back the interval off
+further rather than retrying; the composite keeps `igexport` running meanwhile.
 
 Bio links have no publish timestamp, so their synthetic Stories use discovery time and a
 `bio:` prefixed id. Exclude that prefix when measuring detection latency:

@@ -27,8 +27,8 @@ class Config:
     discord_internship_webhook_url: str = ""
     heartbeat_url: str = ""
     # Instagram is polled directly by the bio source; far slower than the Story cadence
-    # so a residential IP does not attract a throttle.
-    bio_poll_interval_seconds: int = 600
+    # so a residential IP does not attract a throttle. 600s did attract one.
+    bio_poll_interval_seconds: int = 3600
 
     @classmethod
     def from_env(cls) -> "Config":
@@ -44,5 +44,5 @@ class Config:
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
             discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
-            bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "600")),
+            bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "3600")),
         )
