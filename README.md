@@ -44,8 +44,30 @@ python -m instagram_tracker --once
 | `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls |
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
-| `DISCORD_WEBHOOK_URL` | — | Discord webhook; required to notify |
+| `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
+| `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
+
+## What counts as relevant
+
+A posting qualifies when it is software-related **and** either entry-level/new-grad or an
+internship. Each relevant job is tagged with a `role_type` that decides where it goes:
+
+| Role type | Signals (title or `employmentType` only) | Channel |
+| --- | --- | --- |
+| `internship` | `intern`, `internship`, `co-op`, `coop` | `DISCORD_INTERNSHIP_WEBHOOK_URL` |
+| `new_grad` | `new grad`, `entry level`, `early career`, `associate`, … | `DISCORD_WEBHOOK_URL` |
+
+Internship signals are read from the title and `employmentType` only, never the
+description — postings routinely mention unrelated internship programmes, which would
+mislabel full-time roles. Seniority negatives still win, so "Senior Software Engineering
+Intern" is rejected. `contract` and `part-time` still reject outright.
+
+Signal matching allows a bounded set of inflections (`s`, `es`, `ing`, `ed`, `ship`), so
+`software engineer` matches "Software Engineering" and `intern` matches "interns" and
+"internship". The set is deliberately closed: open-ended suffix matching would make
+`intern` match **internal** and **international**, turning an Internal Tools role into an
+internship alert.
 
 ## Story sources
 
