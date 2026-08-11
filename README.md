@@ -52,6 +52,8 @@ python -m instagram_tracker --once
 | `PORT` | — | Set by the host; when present a health endpoint is served on it |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
 | `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
+| `DISCORD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
+| `DISCORD_INTERNSHIP_MENTIONS` | — | Same for internship alerts; independent of the above |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
 
 ## What counts as relevant
@@ -74,6 +76,34 @@ Signal matching allows a bounded set of inflections (`s`, `es`, `ing`, `ed`, `sh
 "internship". The set is deliberately closed: open-ended suffix matching would make
 `intern` match **internal** and **international**, turning an Internal Tools role into an
 internship alert.
+
+## Mentioning people
+
+`DISCORD_MENTIONS` and `DISCORD_INTERNSHIP_MENTIONS` hold raw Discord mention text,
+prepended to the alert so it actually notifies someone:
+
+```bash
+DISCORD_MENTIONS=<@&987654321>          # a role
+DISCORD_INTERNSHIP_MENTIONS=<@&111222333>
+```
+
+Enable **Settings → Advanced → Developer Mode** in Discord, then right-click a role or
+user and *Copy ID*. `<@&ID>` is a role, `<@ID>` a user, and `@here` / `@everyone` work
+too. Prefer a role: membership is then managed in Discord instead of by redeploying.
+
+Two details this implementation gets right, both easy to get wrong:
+
+**The mention goes in `content`, never the embed.** Mentions inside an embed render as
+blue text and notify nobody — it looks correct and silently pings no one.
+
+**`allowed_mentions` is always sent, and starts closed.** Discord pings nothing the field
+does not permit. With no mentions configured the message is barred from pinging anything;
+with mentions configured it permits users and roles, and unlocks `@everyone`/`@here` only
+when the configured text actually asks for them. A stray character cannot mass-notify a
+server.
+
+The two settings are independent and do not fall back to each other — pinging the wrong
+group is worse than pinging nobody.
 
 ## Story sources
 

@@ -39,5 +39,9 @@ services:
         sync: false
       - key: DISCORD_INTERNSHIP_WEBHOOK_URL
         sync: false
+      - key: DISCORD_MENTIONS
+        sync: false
+      - key: DISCORD_INTERNSHIP_MENTIONS
+        sync: false
       - key: HEARTBEAT_URL
         sync: false
