@@ -27,6 +27,8 @@ class Config:
     discord_webhook_url: str = ""
     # Internships go to their own channel; falls back to the main webhook when unset.
     discord_internship_webhook_url: str = ""
+    # Postings the fetcher could not read at all — a review channel, not an alert channel.
+    discord_unknown_webhook_url: str = ""
     # Raw Discord mention text prepended to each alert, e.g. "<@&123>" for a role.
     # Independent per role type — these deliberately do not fall back to each other.
     discord_mentions: str = ""
@@ -55,6 +57,7 @@ class Config:
             database_url=os.getenv("DATABASE_URL", ""),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
             discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
+            discord_unknown_webhook_url=os.getenv("DISCORD_UNKNOWN_WEBHOOK_URL", ""),
             discord_mentions=os.getenv("DISCORD_MENTIONS", ""),
             discord_internship_mentions=os.getenv("DISCORD_INTERNSHIP_MENTIONS", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),

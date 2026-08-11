@@ -52,6 +52,7 @@ python -m instagram_tracker --once
 | `PORT` | — | Set by the host; when present a health endpoint is served on it |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
 | `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
+| `DISCORD_UNKNOWN_WEBHOOK_URL` | — | Review channel for postings that could not be read |
 | `DISCORD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
 | `DISCORD_INTERNSHIP_MENTIONS` | — | Same for internship alerts; independent of the above |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
@@ -82,6 +83,17 @@ that is worse than none, because it makes the classifier reject confidently when
 saw the posting. Page titles that are chrome or a single word are discarded, falling
 through to the URL slug and then to `unknown`. JSON-LD titles are exempt: those are the
 employer's own statement of the role.
+
+**And `unknown` postings are sent to a review channel** via
+`DISCORD_UNKNOWN_WEBHOOK_URL`, in amber and headed "Could not read this posting", with a
+field explaining why. Some sites cannot be read at all — `careers.ibm.com` answers a
+plain fetch with HTTP 202 and an empty body, which is bot detection rather than
+client-side rendering, and no amount of parsing recovers the role. Dropping those links
+silently cost a real internship on 2026-08-11.
+
+These alerts never carry a mention: they are triage, not urgency, and a ping on every
+unreadable link would train you to ignore the ping that matters. They never fall back to
+a real channel either — with no review webhook set they stay silent, as before.
 
 Signal matching allows a bounded set of inflections (`s`, `es`, `ing`, `ed`, `ship`), so
 `software engineer` matches "Software Engineering" and `intern` matches "interns" and

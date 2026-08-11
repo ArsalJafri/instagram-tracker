@@ -39,6 +39,8 @@ services:
         sync: false
       - key: DISCORD_INTERNSHIP_WEBHOOK_URL
         sync: false
+      - key: DISCORD_UNKNOWN_WEBHOOK_URL
+        sync: false
       - key: DISCORD_MENTIONS
         sync: false
       - key: DISCORD_INTERNSHIP_MENTIONS

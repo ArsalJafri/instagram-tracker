@@ -100,7 +100,11 @@ class Pipeline:
             job.reason,
         )
 
-        if job.classification is not Classification.RELEVANT:
+        # Unreadable postings are worth surfacing too — some sites block plain fetches
+        # entirely, and silently dropping those links has already cost a real job. The
+        # notifier decides whether a review channel exists; with none configured it
+        # declines and nothing is recorded.
+        if job.classification is Classification.NOT_RELEVANT:
             return False
         if self.db.is_notified(link.canonical_url):
             return False
@@ -126,5 +130,6 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
             config.discord_internship_webhook_url,
             mentions=config.discord_mentions,
             internship_mentions=config.discord_internship_mentions,
+            unknown_webhook_url=config.discord_unknown_webhook_url,
         ),
     )

@@ -7,17 +7,19 @@ import logging
 import requests
 
 from .classifier import is_known_ats
-from .models import Job, RoleType
+from .models import Classification, Job, RoleType
 
 log = logging.getLogger(__name__)
 
 EMBED_COLOR = 0x2ECC71
 INTERNSHIP_EMBED_COLOR = 0x3498DB
+UNKNOWN_EMBED_COLOR = 0xE67E22
 
 HEADLINE = {
     RoleType.NEW_GRAD: "New entry-level software role",
     RoleType.INTERNSHIP: "New software internship",
 }
+UNKNOWN_HEADLINE = "Could not read this posting — check it manually"
 
 
 class DiscordNotifier:
@@ -36,17 +38,21 @@ class DiscordNotifier:
         internship_webhook_url: str = "",
         mentions: str = "",
         internship_mentions: str = "",
+        unknown_webhook_url: str = "",
         timeout: int = 15,
         session: requests.Session | None = None,
     ) -> None:
         self.webhook_url = webhook_url
         self.internship_webhook_url = internship_webhook_url
+        self.unknown_webhook_url = unknown_webhook_url
         self.mentions = mentions
         self.internship_mentions = internship_mentions
         self.timeout = timeout
         self.session = session or requests.Session()
 
     def mentions_for(self, job: Job) -> str:
+        if job.classification is Classification.UNKNOWN:
+            return ""
         if job.role_type is RoleType.INTERNSHIP:
             return self.internship_mentions
         return self.mentions
@@ -56,6 +62,11 @@ class DiscordNotifier:
         return bool(self.webhook_url or self.internship_webhook_url)
 
     def webhook_for(self, job: Job) -> str:
+        # Unreadable postings never fall back to a real channel: the point of a separate
+        # review channel is that they do not mix with confirmed matches. With no channel
+        # configured they stay silent, which is the behaviour before this existed.
+        if job.classification is Classification.UNKNOWN:
+            return self.unknown_webhook_url
         if job.role_type is RoleType.INTERNSHIP and self.internship_webhook_url:
             return self.internship_webhook_url
         return self.webhook_url or self.internship_webhook_url
@@ -75,7 +86,12 @@ class DiscordNotifier:
         except requests.RequestException as exc:
             log.error("Discord notification failed for %s: %s", job.url, exc)
             return False
-        log.info("Notified Discord (%s) about %s", job.role_type.value, job.url)
+        label = (
+            "unknown"
+            if job.classification is Classification.UNKNOWN
+            else job.role_type.value
+        )
+        log.info("Notified Discord (%s) about %s", label, job.url)
         return True
 
 
@@ -106,11 +122,21 @@ def build_payload(job: Job, username: str, mentions: str = "") -> dict:
     if is_known_ats(job.url):
         fields.append({"name": "Source", "value": "Known ATS", "inline": True})
 
+    unreadable = job.classification is Classification.UNKNOWN
     internship = job.role_type is RoleType.INTERNSHIP
+
+    if unreadable:
+        title, color = "Unreadable job posting", UNKNOWN_EMBED_COLOR
+        # The reason is the useful part here: it says why the page could not be read.
+        fields.append({"name": "Why", "value": job.reason[:1024] or "unknown", "inline": False})
+    else:
+        title = job.title or "Job posting"
+        color = INTERNSHIP_EMBED_COLOR if internship else EMBED_COLOR
+
     embed = {
-        "title": (job.title or "Job posting")[:256],
+        "title": title[:256],
         "url": job.url,
-        "color": INTERNSHIP_EMBED_COLOR if internship else EMBED_COLOR,
+        "color": color,
         "description": job.url,
         "footer": {"text": f"From @{username} on Instagram"},
     }
@@ -119,7 +145,7 @@ def build_payload(job: Job, username: str, mentions: str = "") -> dict:
 
     # Mentions must live in `content`. Inside an embed they render as blue text and
     # notify nobody, which would look correct and silently ping no one.
-    content = HEADLINE[job.role_type]
+    content = UNKNOWN_HEADLINE if unreadable else HEADLINE[job.role_type]
     if mentions.strip():
         content = f"{mentions.strip()} {content}"
 
