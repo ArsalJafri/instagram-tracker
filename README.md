@@ -147,12 +147,17 @@ absent, as it is locally, no socket is opened at all.
 
 ```json
 { "status": "ok", "polls": 42, "notifications_sent": 3,
-  "seconds_since_last_poll": 17, "last_error": null }
+  "seconds_since_last_poll": 17, "stale_after_seconds": 300, "last_error": null }
 ```
 
-That payload is deliberately more than `200 OK` — a process that is alive but has
-stopped polling is the failure worth catching, so the response reports when it last
-actually worked.
+**It returns 503 once polling has stalled** — no successful poll for five poll intervals
+(minimum 300s). A process that is alive but no longer polling is the failure worth
+catching, and a permanent 200 would hide it. Because the failure shows up in the status
+code, an ordinary uptime check becomes a real liveness check, and UptimeRobot doubles as
+the heartbeat with nothing else to configure.
+
+Before the first poll the clock runs from startup, so a cold deploy gets a grace period
+rather than failing its host health check on the first request.
 
 **No persistent disk.** Free services have an ephemeral filesystem, so SQLite would be
 wiped on every redeploy, restart and spin-down. That is not just lost history: an empty
@@ -162,6 +167,11 @@ runs on Postgres instead.
 
 **Use a database that does not expire.** Render's own free Postgres is deleted 30 days
 after creation. Point `DATABASE_URL` at Neon or Supabase, whose free tiers are permanent.
+
+The connection is re-established automatically if it drops. A local SQLite file never
+dies, but a hosted Postgres will — on restart, idle timeout or a network blip — and
+without reconnection the tracker would keep running while silently persisting and
+notifying nothing.
 
 Steps:
 
