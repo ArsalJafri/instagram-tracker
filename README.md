@@ -103,6 +103,49 @@ This fixes reboots and crashes. It does **not** fix sleep: nothing polls while t
 is shut, and launchd simply resumes the agent on wake. Only an always-on host solves
 that; `caffeinate -s` is a stopgap when the laptop is plugged in.
 
+## Deploying to a Linux host
+
+`deploy/setup-gcp.sh` provisions a fresh Debian/Ubuntu box — venv, dependencies, and a
+systemd service that restarts on failure and starts at boot. Written for a GCP
+`e2-micro` (free tier, `us-west1`/`us-central1`/`us-east1`), but it makes no
+GCP-specific assumptions and works on any Debian-family machine, including a Pi.
+
+```bash
+git clone git@github.com:ArsalJafri/instagram-tracker.git
+cd instagram-tracker
+cp .env.example .env      # then fill in DISCORD_WEBHOOK_URL
+bash deploy/setup-gcp.sh
+```
+
+The script refuses to run without a `.env`, and never writes one — secrets stay off the
+repo and out of provisioning.
+
+**Carry the database across, or don't — but know which.** Copying `data/job_monitor.db`
+preserves notification history and deduplication. Starting fresh is also safe: with
+`PROCESS_EXISTING_STORIES_ON_STARTUP=false` the currently live Stories are recorded
+without notifying, so a new host does not replay the last 24 hours.
+
+```bash
+gcloud compute scp data/job_monitor.db <instance>:~/instagram-tracker/data/ --zone <zone>
+```
+
+**Stop the old host first.** Two machines with separate databases both notify, so you
+get everything twice. On the Mac:
+
+```bash
+launchctl unload ~/Library/LaunchAgents/com.arsaljafri.instagram-tracker.plist
+```
+
+**Watch the bio source on first run.** Instagram restricts datacenter IP ranges far more
+aggressively than residential ones, so `instagram_bio` may return nothing from a cloud
+VM even though it works from home. The setup script runs one verbose cycle and warns if
+that happens. IGExport is unaffected, so the tracker still works — but if the bio source
+is dead on that host, either drop it from `STORY_PROVIDER` or run on home hardware.
+
+```bash
+journalctl -u instagram-tracker -f
+```
+
 ## Tests
 
 ```bash
