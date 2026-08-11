@@ -26,6 +26,17 @@ LEVEL_SIGNALS = [
     "entry-level",
     "early career",
     "associate",
+    # Numbered junior titles, added 2026-08-11 after "Software Engineer I/II" was found
+    # rejected in the accuracy audit. Deliberately scoped to follow a role word: a bare
+    # "i" or "1" would match almost anything.
+    "engineer i",
+    "engineer ii",
+    "engineer 1",
+    "engineer 2",
+    "developer i",
+    "developer ii",
+    "developer 1",
+    "developer 2",
 ]
 
 # Software / computer-science signals.
@@ -59,9 +70,17 @@ SENIORITY_NEGATIVES = [
 
 # Employment-type negatives — these defeat the full-time rule. "internship" and "intern"
 # used to live here and now qualify instead.
+#
+# The second group is schema.org's own `employmentType` vocabulary. Its spellings differ
+# from prose: sites publish CONTRACTOR and PART_TIME, which the first group never matched
+# ("or" is not an allowed inflection, and a hyphen is not an underscore). Without these,
+# an employer's explicit declaration of a contract role was read as no declaration.
 EMPLOYMENT_NEGATIVES = [
     "contract",
     "part-time",
+    "contractor",
+    "part_time",
+    "temporary",
 ]
 
 KNOWN_ATS_DOMAINS = [
