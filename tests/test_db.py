@@ -68,3 +68,30 @@ def test_database_creates_its_parent_directory(tmp_path):
     with Database(path):
         pass
     assert path.exists()
+
+
+# -- connection resilience ----------------------------------------------
+
+
+def test_a_dropped_connection_is_transparently_reconnected(tmp_path):
+    """A remote Postgres will drop; without this the tracker runs on doing nothing."""
+    from instagram_tracker.db import Database
+
+    with Database(tmp_path / "drop.db") as db:
+        db.record_link("https://example.com/a", "https://example.com/a", "s1")
+
+        db.conn.close()  # simulate the connection dying underneath us
+
+        assert db.is_link_known("https://example.com/a") is True
+        db.record_link("https://example.com/b", "https://example.com/b", "s2")
+        assert db.is_link_known("https://example.com/b") is True
+
+
+def test_a_real_sql_error_is_not_swallowed_by_the_retry(tmp_path):
+    import pytest
+
+    from instagram_tracker.db import Database
+
+    with Database(tmp_path / "err.db") as db:
+        with pytest.raises(Exception):
+            db._execute("SELECT * FROM table_that_does_not_exist")

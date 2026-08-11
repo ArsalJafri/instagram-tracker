@@ -19,9 +19,12 @@ placeholders, a few column types and the migration probe differ.
 
 from __future__ import annotations
 
+import logging
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 POSTGRES_SCHEMES = ("postgres://", "postgresql://")
 
@@ -116,24 +119,45 @@ def _now() -> str:
 
 class Database:
     def __init__(self, target: Path | str) -> None:
+        self.target = target
         self.is_postgres = is_postgres_target(target)
-
-        if self.is_postgres:
-            # Imported lazily so a local SQLite run never needs the driver installed.
-            import psycopg
-            from psycopg.rows import dict_row
-
-            self.conn = psycopg.connect(str(target), row_factory=dict_row)
-        else:
-            path = Path(target)
-            path.parent.mkdir(parents=True, exist_ok=True)
-            self.conn = sqlite3.connect(path)
-            self.conn.row_factory = sqlite3.Row
+        self.conn = self._connect()
 
         for statement in _POSTGRES_SCHEMA if self.is_postgres else _SQLITE_SCHEMA:
             self._execute(statement)
         self._migrate()
         self.conn.commit()
+
+    # -- connection ------------------------------------------------------
+
+    def _connect(self):
+        if self.is_postgres:
+            # Imported lazily so a local SQLite run never needs the driver installed.
+            import psycopg
+            from psycopg.rows import dict_row
+
+            return psycopg.connect(str(self.target), row_factory=dict_row)
+
+        path = Path(self.target)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        conn = sqlite3.connect(path)
+        conn.row_factory = sqlite3.Row
+        return conn
+
+    @property
+    def _connection_errors(self) -> tuple[type[BaseException], ...]:
+        if self.is_postgres:
+            import psycopg
+
+            return (psycopg.OperationalError, psycopg.InterfaceError)
+        return (sqlite3.OperationalError, sqlite3.ProgrammingError)
+
+    def _reconnect(self) -> None:
+        try:
+            self.conn.close()
+        except Exception:  # already broken; nothing useful to do
+            pass
+        self.conn = self._connect()
 
     # -- plumbing --------------------------------------------------------
 
@@ -146,6 +170,22 @@ class Database:
         return sql.replace("?", "%s") if self.is_postgres else sql
 
     def _execute(self, sql: str, params: tuple = ()):
+        """Run a statement, reconnecting once if the connection has died.
+
+        A local SQLite file never drops, but a hosted Postgres will — on restart, idle
+        timeout or any network blip. Without this the connection stays broken forever:
+        the poller survives, logs an error every tick, and silently stops persisting or
+        notifying anything, which looks exactly like a quiet week from the account.
+        """
+        try:
+            return self._run(sql, params)
+        except self._connection_errors as exc:
+            log.warning("Database connection failed (%s); reconnecting", exc)
+            self._reconnect()
+            # A second failure is a real error and is allowed to propagate.
+            return self._run(sql, params)
+
+    def _run(self, sql: str, params: tuple = ()):
         cursor = self.conn.cursor()
         cursor.execute(self._sql(sql), params)
         return cursor
