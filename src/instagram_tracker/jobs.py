@@ -27,8 +27,35 @@ USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36
 _SLUG_NOISE = {
     "job", "jobs", "career", "careers", "posting", "postings", "opening",
     "openings", "details", "detail", "apply", "en", "en-us", "us", "position",
-    "positions", "role", "roles", "req",
+    "positions", "role", "roles", "req", "search", "jobdetail", "collect",
 }
+
+# Page titles that carry no information about the role. Client-rendered career sites
+# return these from a plain fetch — "JobDetail" from IBM, "search" from Tesla, "Yello"
+# from a Boeing event page.
+#
+# These are worse than no title at all: a title makes the classifier reject confidently
+# when in truth it never saw the posting. Discarding them lets the result fall through to
+# `unknown`, which is honest and can be reviewed, instead of a false "not relevant".
+_UNINFORMATIVE_TITLES = {
+    "home", "search", "jobs", "job", "careers", "career", "jobdetail",
+    "job detail", "job search", "search jobs", "careers home", "apply",
+    "sign in", "log in", "login", "page not found", "access denied", "error",
+}
+
+
+def is_uninformative(title: str) -> bool:
+    """True when a title tells us nothing about the role.
+
+    Single words are treated as uninformative because a real posting title is never one
+    word — but a page shell, a vendor name or an opaque id frequently is.
+    """
+    collapsed = re.sub(r"\s+", " ", title).strip().lower()
+    if not collapsed:
+        return True
+    if collapsed.strip(" |-–—") in _UNINFORMATIVE_TITLES:
+        return True
+    return len(collapsed.split()) < 2
 
 
 @dataclass(frozen=True)
@@ -99,7 +126,11 @@ def parse_html(html: str, url: str) -> JobDetails:
             )
 
     title = _meta(soup, "og:title") or _clean(soup.title.string if soup.title else None)
-    if not title:
+    # A JSON-LD JobPosting title is the employer's own statement and is trusted as-is.
+    # Page metadata is not: a client-rendered shell yields the site's chrome, not the role.
+    if not title or is_uninformative(title):
+        if title:
+            log.info("Discarding uninformative page title %r for %s", title, url)
         return JobDetails(None, None, None, None, "", "none")
 
     description = _meta(soup, "og:description") or _meta_name(soup, "description") or ""
@@ -116,6 +147,10 @@ def parse_html(html: str, url: str) -> JobDetails:
 def slug_details(url: str) -> JobDetails:
     """Derive a best-effort title from the URL path when the page yields nothing."""
     title = slug_title(url)
+    # Slugs also produce junk — an opaque event id is one "word" and means nothing.
+    if title and is_uninformative(title):
+        log.info("Discarding uninformative slug title %r for %s", title, url)
+        title = None
     host = urlparse(url).netloc.lower()
     if host.startswith("www."):
         host = host[4:]
