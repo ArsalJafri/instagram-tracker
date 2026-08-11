@@ -90,6 +90,7 @@ class Pipeline:
             job.location,
             job.classification.value,
             job.reason,
+            job.role_type.value if job.classification is Classification.RELEVANT else None,
         )
         log.info(
             "%s -> %s (%s): %s",
@@ -120,5 +121,8 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
             bio_interval_seconds=config.bio_poll_interval_seconds,
         ),
         fetcher=JobFetcher(),
-        notifier=DiscordNotifier(config.discord_webhook_url),
+        notifier=DiscordNotifier(
+            config.discord_webhook_url,
+            config.discord_internship_webhook_url,
+        ),
     )

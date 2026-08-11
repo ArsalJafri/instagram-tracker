@@ -23,6 +23,8 @@ class Config:
     process_existing_stories_on_startup: bool
     database_path: Path
     discord_webhook_url: str
+    # Internships go to their own channel; falls back to the main webhook when unset.
+    discord_internship_webhook_url: str = ""
     heartbeat_url: str = ""
     # Instagram is polled directly by the bio source; far slower than the Story cadence
     # so a residential IP does not attract a throttle.
@@ -40,6 +42,7 @@ class Config:
             ),
             database_path=Path(os.getenv("DATABASE_PATH", "./data/job_monitor.db")),
             discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+            discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
             bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "600")),
         )

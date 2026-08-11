@@ -27,6 +27,10 @@ def main(argv: list[str] | None = None) -> int:
     config = Config.from_env()
     if not config.discord_webhook_url:
         logging.warning("DISCORD_WEBHOOK_URL is not set; relevant jobs will be logged only")
+    if not config.discord_internship_webhook_url:
+        logging.warning(
+            "DISCORD_INTERNSHIP_WEBHOOK_URL is not set; internships will go to the main channel"
+        )
 
     if not config.heartbeat_url:
         logging.warning("HEARTBEAT_URL is not set; a stopped tracker will fail silently")
