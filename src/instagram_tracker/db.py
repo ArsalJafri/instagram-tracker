@@ -246,6 +246,24 @@ class Database:
         )
         self.conn.commit()
 
+    def known_story_ids(self, story_ids: list[str]) -> set[str]:
+        """Which of these Stories have already been processed, in one round trip.
+
+        The obvious loop asks once per Story per poll. Against a local SQLite file that
+        was a function call; against a hosted Postgres it is a network round trip, and
+        with ~32 live Stories polled every minute it came to roughly 46,000 queries a
+        day. This asks once.
+        """
+        if not story_ids:
+            return set()
+
+        placeholders = ", ".join("?" for _ in story_ids)
+        rows = self._execute(
+            f"SELECT story_id FROM processed_stories WHERE story_id IN ({placeholders})",
+            tuple(story_ids),
+        )
+        return {row["story_id"] for row in rows}
+
     def has_any_stories(self) -> bool:
         return self._fetchone("SELECT 1 AS hit FROM processed_stories LIMIT 1") is not None
 

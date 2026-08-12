@@ -49,9 +49,13 @@ class Pipeline:
                 len(stories),
             )
 
+        # Asked once for the whole batch rather than once per Story: the database is
+        # remote now, so a per-Story check is a per-Story network round trip.
+        known = self.db.known_story_ids([story.story_id for story in stories])
+
         sent = 0
         for story in stories:
-            if self.db.is_story_processed(story.story_id):
+            if story.story_id in known:
                 continue
             if seeding:
                 self.db.mark_story_processed(
