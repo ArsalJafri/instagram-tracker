@@ -52,6 +52,7 @@ python -m instagram_tracker --once
 | `PORT` | — | Set by the host; when present a health endpoint is served on it |
 | `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
 | `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
+| `RENDER_PROXY_URL` | `https://r.jina.ai/{url}` | Last-resort renderer for pages that block plain fetches |
 | `DISCORD_UNKNOWN_WEBHOOK_URL` | — | Review channel for postings that could not be read |
 | `DISCORD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
 | `DISCORD_INTERNSHIP_MENTIONS` | — | Same for internship alerts; independent of the above |
@@ -83,6 +84,33 @@ that is worse than none, because it makes the classifier reject confidently when
 saw the posting. Page titles that are chrome or a single word are discarded, falling
 through to the URL slug and then to `unknown`. JSON-LD titles are exempt: those are the
 employer's own statement of the role.
+
+## Reading pages that block plain fetches
+
+Job retrieval tries four sources, in order of reliability and cost:
+
+```
+JSON-LD JobPosting → OpenGraph/<title> → URL slug → rendering proxy → unknown
+```
+
+The fourth exists because some sites cannot be read by any plain client.
+`careers.ibm.com` answers with an **AWS WAF challenge** — HTTP 202 and a script that must
+execute to mint an `aws-waf-token` cookie. No HTML, no JSON-LD, and a URL that carries
+the role only as `?jobId=128497`, so the slug yields nothing either. A real internship
+was missed this way on 2026-08-11.
+
+Worth being precise about what was broken: **nothing was wrong with the parsing.** Once
+the challenge passes, the page serves an ordinary `og:title` that step 2 already handles.
+The only missing piece was a browser to run the challenge. `RENDER_PROXY_URL` borrows one.
+
+It is deliberately last. The proxy costs several seconds and a third-party call against
+milliseconds for the others, so the common path never reaches it — only the one or two
+links a day nothing else can read. Set `RENDER_PROXY_URL` empty to disable.
+
+Failure is contained in every direction. If the proxy is down, times out, or the site
+blocks it too, the result is the `unknown` it would have been anyway. That last case is
+real: Tesla refuses the proxy as well, and the proxy reports it in-band with a 200 and an
+`Access Denied` title, which is detected rather than mistaken for a job.
 
 **And `unknown` postings are sent to a review channel** via
 `DISCORD_UNKNOWN_WEBHOOK_URL`, in amber and headed "Could not read this posting", with a

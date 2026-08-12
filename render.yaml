@@ -32,6 +32,8 @@ services:
         value: "3600"
       - key: PROCESS_EXISTING_STORIES_ON_STARTUP
         value: "false"
+      - key: RENDER_PROXY_URL
+        value: https://r.jina.ai/{url}
       # Set these in the dashboard, never in this file.
       - key: DATABASE_URL
         sync: false
