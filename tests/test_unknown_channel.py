@@ -106,3 +106,46 @@ def test_review_alerts_never_ping_anyone():
 
     assert payload["content"].startswith("Could not read")
     assert payload["allowed_mentions"] == {"parse": []}
+
+
+# -- near misses ---------------------------------------------------------
+
+
+def near_miss_job():
+    return Job(
+        title="business analyst intern summer",
+        company=None,
+        location=None,
+        classification=Classification.NOT_RELEVANT,
+        url="https://capitalonecareers.com/job/mclean/business-analyst-intern-summer-2027",
+        reason="no software or computer-science signal",
+        near_miss=True,
+    )
+
+
+def test_a_near_miss_goes_to_the_review_channel():
+    session = FakeSession()
+    assert notifier(session).notify(near_miss_job(), "zero2sudo") is True
+    assert session.calls[0][0] == "https://review.test"
+
+
+def test_a_near_miss_is_labelled_and_explained():
+    payload = build_payload(near_miss_job(), "zero2sudo")
+    embed = payload["embeds"][0]
+
+    assert payload["content"] == "Near match — matched one rule but not the other"
+    assert embed["title"] == "business analyst intern summer"
+    why = {f["name"]: f["value"] for f in embed["fields"]}["Why"]
+    assert "no software" in why
+
+
+def test_a_near_miss_never_pings_anyone():
+    session = FakeSession()
+    notifier(session).notify(near_miss_job(), "zero2sudo")
+    assert session.calls[0][1]["allowed_mentions"] == {"parse": []}
+
+
+def test_near_misses_stay_silent_without_a_review_channel():
+    session = FakeSession()
+    assert notifier(session, unknown="").notify(near_miss_job(), "zero2sudo") is False
+    assert session.calls == []

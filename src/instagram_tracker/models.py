@@ -47,3 +47,7 @@ class Job:
     url: str
     reason: str = ""
     role_type: RoleType = RoleType.NEW_GRAD
+    # Matched one relevance rule but not the other — a real early-career posting that is
+    # not software, or a software posting with no level stated. Worth eyeballing, not
+    # worth alerting on, so these go to the review channel.
+    near_miss: bool = False

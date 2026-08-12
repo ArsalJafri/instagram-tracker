@@ -146,18 +146,32 @@ def classify(details: JobDetails, url: str) -> Job:
         employment, INTERNSHIP_SIGNALS
     )
 
-    if employment_hits:
-        return _reject(details, url, f"not full-time: {', '.join(employment_hits)}")
-    if seniority_hits:
-        return _reject(details, url, f"not entry-level: {', '.join(seniority_hits)}")
-
     field_hits = _found(body, FIELD_SIGNALS)
-    if not field_hits:
-        return _reject(details, url, "no software or computer-science signal")
-
     level_hits = _found(body, LEVEL_SIGNALS)
-    if not (level_hits or internship_hits):
-        return _reject(details, url, "no entry-level, new-grad or internship signal")
+
+    # Every signal is computed before any rule fires, so a rejection can still report
+    # what *did* match. A posting satisfying exactly one of the two rules is a near
+    # miss: a genuine early-career role that is not software, or a software role with no
+    # level stated. Matching neither is a newsletter or an event, and stays silent.
+    has_level = bool(level_hits or internship_hits)
+    has_field = bool(field_hits)
+    near_miss = has_level != has_field
+
+    # A seniority word settles it only when nothing else claims the role is junior.
+    # "Senior Software Engineer" is a clean reject and not worth eyeballing. But
+    # "Product Manager Intern" trips `manager` while plainly being an internship, so the
+    # seniority hit there is a false positive from a role name, not a statement of level.
+    if seniority_hits and not has_level:
+        near_miss = False
+
+    if employment_hits:
+        return _reject(details, url, f"not full-time: {', '.join(employment_hits)}", near_miss)
+    if seniority_hits:
+        return _reject(details, url, f"not entry-level: {', '.join(seniority_hits)}", near_miss)
+    if not has_field:
+        return _reject(details, url, "no software or computer-science signal", near_miss)
+    if not has_level:
+        return _reject(details, url, "no entry-level, new-grad or internship signal", near_miss)
 
     if internship_hits:
         role_type = RoleType.INTERNSHIP
@@ -180,7 +194,7 @@ def classify(details: JobDetails, url: str) -> Job:
     )
 
 
-def _reject(details: JobDetails, url: str, reason: str) -> Job:
+def _reject(details: JobDetails, url: str, reason: str, near_miss: bool = False) -> Job:
     return Job(
         title=details.title,
         company=details.company,
@@ -188,6 +202,7 @@ def _reject(details: JobDetails, url: str, reason: str) -> Job:
         classification=Classification.NOT_RELEVANT,
         url=url,
         reason=reason,
+        near_miss=near_miss,
     )
 
 

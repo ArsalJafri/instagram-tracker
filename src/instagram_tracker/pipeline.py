@@ -108,7 +108,7 @@ class Pipeline:
         # entirely, and silently dropping those links has already cost a real job. The
         # notifier decides whether a review channel exists; with none configured it
         # declines and nothing is recorded.
-        if job.classification is Classification.NOT_RELEVANT:
+        if job.classification is Classification.NOT_RELEVANT and not job.near_miss:
             return False
         if self.db.is_notified(link.canonical_url):
             return False

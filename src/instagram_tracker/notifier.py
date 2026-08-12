@@ -20,6 +20,8 @@ HEADLINE = {
     RoleType.INTERNSHIP: "New software internship",
 }
 UNKNOWN_HEADLINE = "Could not read this posting — check it manually"
+NEAR_MISS_HEADLINE = "Near match — matched one rule but not the other"
+NEAR_MISS_EMBED_COLOR = 0xF1C40F
 
 
 class DiscordNotifier:
@@ -51,7 +53,7 @@ class DiscordNotifier:
         self.session = session or requests.Session()
 
     def mentions_for(self, job: Job) -> str:
-        if job.classification is Classification.UNKNOWN:
+        if job.classification is Classification.UNKNOWN or job.near_miss:
             return ""
         if job.role_type is RoleType.INTERNSHIP:
             return self.internship_mentions
@@ -65,7 +67,7 @@ class DiscordNotifier:
         # Unreadable postings never fall back to a real channel: the point of a separate
         # review channel is that they do not mix with confirmed matches. With no channel
         # configured they stay silent, which is the behaviour before this existed.
-        if job.classification is Classification.UNKNOWN:
+        if job.classification is Classification.UNKNOWN or job.near_miss:
             return self.unknown_webhook_url
         if job.role_type is RoleType.INTERNSHIP and self.internship_webhook_url:
             return self.internship_webhook_url
@@ -86,11 +88,12 @@ class DiscordNotifier:
         except requests.RequestException as exc:
             log.error("Discord notification failed for %s: %s", job.url, exc)
             return False
-        label = (
-            "unknown"
-            if job.classification is Classification.UNKNOWN
-            else job.role_type.value
-        )
+        if job.classification is Classification.UNKNOWN:
+            label = "unknown"
+        elif job.near_miss:
+            label = "near-miss"
+        else:
+            label = job.role_type.value
         log.info("Notified Discord (%s) about %s", label, job.url)
         return True
 
@@ -125,10 +128,16 @@ def build_payload(job: Job, username: str, mentions: str = "") -> dict:
     unreadable = job.classification is Classification.UNKNOWN
     internship = job.role_type is RoleType.INTERNSHIP
 
+    if unreadable or job.near_miss:
+        # The reason is the useful part for both: why the page could not be read, or
+        # which of the two rules the posting failed.
+        fields.append({"name": "Why", "value": job.reason[:1024] or "unknown", "inline": False})
+
     if unreadable:
         title, color = "Unreadable job posting", UNKNOWN_EMBED_COLOR
-        # The reason is the useful part here: it says why the page could not be read.
-        fields.append({"name": "Why", "value": job.reason[:1024] or "unknown", "inline": False})
+    elif job.near_miss:
+        title = job.title or "Job posting"
+        color = NEAR_MISS_EMBED_COLOR
     else:
         title = job.title or "Job posting"
         color = INTERNSHIP_EMBED_COLOR if internship else EMBED_COLOR
@@ -145,7 +154,12 @@ def build_payload(job: Job, username: str, mentions: str = "") -> dict:
 
     # Mentions must live in `content`. Inside an embed they render as blue text and
     # notify nobody, which would look correct and silently ping no one.
-    content = UNKNOWN_HEADLINE if unreadable else HEADLINE[job.role_type]
+    if unreadable:
+        content = UNKNOWN_HEADLINE
+    elif job.near_miss:
+        content = NEAR_MISS_HEADLINE
+    else:
+        content = HEADLINE[job.role_type]
     if mentions.strip():
         content = f"{mentions.strip()} {content}"
 

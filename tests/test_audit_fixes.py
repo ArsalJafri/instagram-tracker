@@ -128,3 +128,40 @@ def test_a_readable_slug_still_produces_a_title():
         "78703249065943750-software-engineer-early-career-campus"
     )
     assert classify(slug_details(url), url).classification is Classification.RELEVANT
+
+
+# -- near-miss detection -------------------------------------------------
+
+
+def test_early_career_roles_that_are_not_software_are_near_misses():
+    for title in [
+        "business analyst intern summer",
+        "Product Manager Intern (Signal and Identity Product) - 2027 Summer",
+        "analyst early internship program summer",
+    ]:
+        assert classify(details(title), "https://x/1").near_miss is True, title
+
+
+def test_software_roles_with_no_stated_level_are_near_misses():
+    assert classify(details("Software Engineering - Commerce"), "https://x/1").near_miss is True
+
+
+def test_newsletters_and_events_are_not_near_misses():
+    for title in [
+        "Home | Direct Consideration Newsletter",
+        "ETCH - Inside Micron & the Semiconductor Industry",
+        "Future of Asset Management Virtual Series",
+        "2027 Quantitative Prediction Markets Research Summer Analyst",
+    ]:
+        assert classify(details(title), "https://x/1").near_miss is False, title
+
+
+def test_explicit_seniority_is_a_clean_reject_not_a_near_miss():
+    # "Senior Software Engineer" has a software signal and no level signal, so the bare
+    # rule would flag it. An explicit seniority word settles the question instead.
+    assert classify(details("Senior Software Engineer"), "https://x/1").near_miss is False
+    assert classify(details("Engineering Manager"), "https://x/1").near_miss is False
+
+
+def test_a_relevant_job_is_never_a_near_miss():
+    assert classify(details("Software Engineer, New Grad"), "https://x/1").near_miss is False

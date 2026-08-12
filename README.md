@@ -112,6 +112,17 @@ blocks it too, the result is the `unknown` it would have been anyway. That last 
 real: Tesla refuses the proxy as well, and the proxy reports it in-band with a 200 and an
 `Access Denied` title, which is detected rather than mistaken for a job.
 
+**Near misses go to the review channel too.** A posting that satisfies exactly one of
+the two rules — an internship or entry-level signal without a software one, or a software
+signal with no level stated — is worth a glance but not an alert. `zero2sudo` posts a lot
+of business-analyst and product-management internships, which are genuine early-career
+roles that this tracker is not scoped for.
+
+A seniority word settles the question only when nothing else claims the role is junior:
+`Senior Software Engineer` is a clean reject and stays silent, while
+`Product Manager Intern` trips `manager` yet is plainly an internship, so it still
+surfaces. Newsletters and events match neither rule and never appear.
+
 **And `unknown` postings are sent to a review channel** via
 `DISCORD_UNKNOWN_WEBHOOK_URL`, in amber and headed "Could not read this posting", with a
 field explaining why. Some sites cannot be read at all — `careers.ibm.com` answers a
