@@ -127,3 +127,38 @@ def test_an_unconfigured_notifier_still_sends_silently():
 
     assert notifier.notify(job(), "zero2sudo") is True
     assert session.calls[0][1]["allowed_mentions"] == {"parse": []}
+
+
+# -- malformed configuration ---------------------------------------------
+
+
+def test_a_bare_id_is_reported_as_malformed():
+    # Discord's "Copy ID" yields a bare number, so prefixing @ is the natural guess.
+    # It sends fine, looks plausible and pings nobody.
+    from instagram_tracker.notifier import malformed_mentions
+
+    assert malformed_mentions("@1536859615256645732") == ["1536859615256645732"]
+    assert malformed_mentions("1536859615256645732") == ["1536859615256645732"]
+
+
+def test_correctly_wrapped_mentions_are_not_reported():
+    from instagram_tracker.notifier import malformed_mentions
+
+    assert malformed_mentions("<@&1536859615256645732>") == []
+    assert malformed_mentions("<@1536859615256645732>") == []
+    assert malformed_mentions("<@!1536859615256645732>") == []
+    assert malformed_mentions("<@&123456789012345> <@&987654321098765>") == []
+
+
+def test_broadcast_pings_and_blanks_are_not_reported():
+    from instagram_tracker.notifier import malformed_mentions
+
+    assert malformed_mentions("") == []
+    assert malformed_mentions("@here") == []
+    assert malformed_mentions("@everyone") == []
+
+
+def test_a_mix_reports_only_the_bare_one():
+    from instagram_tracker.notifier import malformed_mentions
+
+    assert malformed_mentions("<@&111222333444555> @999888777666555") == ["999888777666555"]

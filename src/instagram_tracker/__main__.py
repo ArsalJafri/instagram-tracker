@@ -11,6 +11,7 @@ from .config import Config
 from .db import Database, is_postgres_target
 from .health import HealthState, serve_in_background
 from .heartbeat import Heartbeat
+from .notifier import malformed_mentions
 from .pipeline import build_pipeline
 from .poller import Poller
 
@@ -33,6 +34,19 @@ def main(argv: list[str] | None = None) -> int:
         logging.warning(
             "DISCORD_INTERNSHIP_WEBHOOK_URL is not set; internships will go to the main channel"
         )
+
+    for name, value in (
+        ("DISCORD_MENTIONS", config.discord_mentions),
+        ("DISCORD_INTERNSHIP_MENTIONS", config.discord_internship_mentions),
+    ):
+        bare = malformed_mentions(value)
+        if bare:
+            logging.warning(
+                "%s contains bare id(s) %s — Discord renders these as plain text and "
+                "pings nobody. Wrap them: <@&ID> for a role, <@ID> for a user.",
+                name,
+                ", ".join(bare),
+            )
 
     if not config.heartbeat_url:
         logging.warning("HEARTBEAT_URL is not set; a stopped tracker will fail silently")

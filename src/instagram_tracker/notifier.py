@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import requests
 
@@ -96,6 +97,20 @@ class DiscordNotifier:
             label = job.role_type.value
         log.info("Notified Discord (%s) about %s", label, job.url)
         return True
+
+
+_VALID_MENTION = re.compile(r"<@[!&]?\d+>")
+_SNOWFLAKE = re.compile(r"\d{15,}")
+
+
+def malformed_mentions(mentions: str) -> list[str]:
+    """IDs written without their wrapper, which Discord renders as plain text.
+
+    `@1536859615256645732` sends fine, looks plausible and pings nobody — the failure is
+    entirely silent, so it is worth reporting at startup. Valid mentions are removed
+    first; any Discord id left over was never going to notify anyone.
+    """
+    return _SNOWFLAKE.findall(_VALID_MENTION.sub(" ", mentions))
 
 
 def allowed_mentions(mentions: str) -> dict:
