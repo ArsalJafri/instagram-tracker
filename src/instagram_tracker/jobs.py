@@ -1,11 +1,23 @@
 """Job retrieval: fetch a posting and pull title, company and location out of it.
 
-Three sources are tried in order of reliability:
+Four sources are tried, in order of reliability and cost:
 
 1. JSON-LD ``JobPosting`` — the structured format most ATS platforms emit.
 2. OpenGraph / ``<title>`` metadata.
 3. The URL slug, for postings rendered entirely client side (Workday and friends
    return an empty shell to a plain HTTP fetch, and browser automation is a non-goal).
+4. A rendering proxy, which executes the page's JavaScript on our behalf.
+
+Step 4 exists because some sites cannot be read at all by a plain client.
+``careers.ibm.com`` answers with an AWS WAF challenge — HTTP 202 and a script that must
+run to mint a token — so there is no HTML, no JSON-LD and no usable slug. A real
+internship was missed this way. Notably the page is perfectly ordinary once the
+challenge passes: it serves an `og:title` that step 2 already understands, so the
+problem was never parsing, only getting someone to run a browser.
+
+It is last for a reason: it costs several seconds and a third-party call, against
+milliseconds for the others. The common path never reaches it, and if the proxy fails
+the result is the `unknown` it would have been anyway.
 """
 
 from __future__ import annotations
@@ -22,6 +34,9 @@ from bs4 import BeautifulSoup
 log = logging.getLogger(__name__)
 
 USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+
+# `{url}` is replaced with the target. Set RENDER_PROXY_URL empty to disable entirely.
+DEFAULT_RENDER_PROXY = "https://r.jina.ai/{url}"
 
 # Slug segments that are path scaffolding rather than part of a role name.
 _SLUG_NOISE = {
@@ -71,21 +86,58 @@ class JobDetails:
 
 
 class JobFetcher:
-    def __init__(self, timeout: int = 20, session: requests.Session | None = None) -> None:
+    def __init__(
+        self,
+        timeout: int = 20,
+        session: requests.Session | None = None,
+        render_proxy_url: str = DEFAULT_RENDER_PROXY,
+        render_timeout: int = 45,
+    ) -> None:
         self.timeout = timeout
         self.session = session or requests.Session()
+        self.render_proxy_url = render_proxy_url
+        self.render_timeout = render_timeout
 
     def fetch(self, url: str) -> JobDetails:
         html = self._get_html(url)
-        if html is None:
-            return slug_details(url)
+        if html is not None:
+            details = parse_html(html, url)
+            if details.title:
+                return details
+            log.info("No title found in HTML for %s; falling back to the URL slug", url)
 
-        details = parse_html(html, url)
-        if details.title:
-            return details
+        slug = slug_details(url)
+        if slug.title:
+            return slug
 
-        log.info("No title found in HTML for %s; falling back to the URL slug", url)
-        return slug_details(url)
+        # Everything cheap has failed. Only now is it worth paying for a rendered fetch.
+        rendered = self._fetch_rendered(url)
+        if rendered and rendered.title:
+            log.info("Recovered %r for %s via the rendering proxy", rendered.title, url)
+            return rendered
+
+        # Title is None, so this classifies as unknown — the same outcome as before.
+        return slug
+
+    def _fetch_rendered(self, url: str) -> JobDetails | None:
+        """Ask a rendering proxy to run the page's JavaScript and return its text.
+
+        Never raises: this is a last resort, and its failure must leave the caller with
+        the `unknown` it already had rather than breaking the poll.
+        """
+        if not self.render_proxy_url:
+            return None
+        try:
+            response = self.session.get(
+                self.render_proxy_url.replace("{url}", url),
+                headers={"User-Agent": "instagram-tracker", "Accept": "text/plain"},
+                timeout=self.render_timeout,
+            )
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            log.warning("Rendering proxy failed for %s: %s", url, exc)
+            return None
+        return parse_rendered(response.text, url)
 
     def _get_html(self, url: str) -> str | None:
         try:
@@ -141,6 +193,47 @@ def parse_html(html: str, url: str) -> JobDetails:
         employment_type=None,
         text=f"{title} {description}".strip(),
         source="metadata",
+    )
+
+
+def parse_rendered(body: str, url: str) -> JobDetails | None:
+    """Pull a title and body text out of a rendering proxy's plain-text response.
+
+    The format is a short header block followed by the page content:
+
+        Title: Software Developer Intern 2027
+
+        URL Source: https://...
+
+        Markdown Content:
+        ...
+    """
+    # The proxy reports upstream failures in-band, with a 200 and an error title such as
+    # "Access Denied". Without this the error page becomes the job title and is rejected
+    # as "not relevant" — a confident wrong answer instead of an honest unknown.
+    if "Target URL returned error" in body:
+        log.info("Rendering proxy reached %s but the site refused it", url)
+        return None
+
+    title = None
+    for line in body.splitlines():
+        if line.lower().startswith("title:"):
+            title = _clean(line.split(":", 1)[1])
+            break
+
+    if not title or is_uninformative(title):
+        return None
+
+    marker = "Markdown Content:"
+    text = body.split(marker, 1)[1] if marker in body else body
+    # The description adds context for classification but the title carries the signal.
+    return JobDetails(
+        title=title,
+        company=None,
+        location=None,
+        employment_type=None,
+        text=f"{title} {re.sub(r'\\s+', ' ', text)[:4000]}".strip(),
+        source="rendered",
     )
 
 

@@ -8,6 +8,8 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
+from .jobs import DEFAULT_RENDER_PROXY
+
 _TRUE = {"1", "true", "yes", "on"}
 
 
@@ -37,6 +39,9 @@ class Config:
     # Instagram is polled directly by the bio source; far slower than the Story cadence
     # so a residential IP does not attract a throttle. 600s did attract one.
     bio_poll_interval_seconds: int = 3600
+    # Rendering proxy used only when a page cannot be read any other way. `{url}` is
+    # replaced with the target; empty disables the fallback entirely.
+    render_proxy_url: str = DEFAULT_RENDER_PROXY
 
     @property
     def database_target(self) -> str | Path:
@@ -62,4 +67,5 @@ class Config:
             discord_internship_mentions=os.getenv("DISCORD_INTERNSHIP_MENTIONS", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
             bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "3600")),
+            render_proxy_url=os.getenv("RENDER_PROXY_URL", DEFAULT_RENDER_PROXY),
         )

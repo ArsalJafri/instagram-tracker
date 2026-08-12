@@ -124,7 +124,7 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
             config.story_provider,
             bio_interval_seconds=config.bio_poll_interval_seconds,
         ),
-        fetcher=JobFetcher(),
+        fetcher=JobFetcher(render_proxy_url=config.render_proxy_url),
         notifier=DiscordNotifier(
             config.discord_webhook_url,
             config.discord_internship_webhook_url,
