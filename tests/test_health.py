@@ -131,3 +131,48 @@ def test_the_endpoint_returns_503_when_stalled():
             assert json.loads(exc.read())["status"] == "stalled"
     finally:
         server.shutdown()
+
+
+# -- HEAD support --------------------------------------------------------
+
+
+def _request(server, method):
+    import http.client
+
+    conn = http.client.HTTPConnection("127.0.0.1", server.server_address[1], timeout=5)
+    conn.request(method, "/")
+    response = conn.getresponse()
+    body = response.read()
+    conn.close()
+    return response.status, dict(response.getheaders()), body
+
+
+def test_head_is_answered_like_get():
+    """Uptime monitors send HEAD by default; an unhandled HEAD returns 501 and the
+    service looks permanently down to the thing watching it."""
+    health = HealthState()
+    health.record_poll(0)
+    server = serve_in_background(health, 0)
+    try:
+        get_status, get_headers, get_body = _request(server, "GET")
+        head_status, head_headers, head_body = _request(server, "HEAD")
+    finally:
+        server.shutdown()
+
+    assert get_status == 200
+    assert head_status == 200, "HEAD must not return 501"
+    assert head_body == b"", "HEAD must not send a body"
+    assert head_headers["Content-Length"] == get_headers["Content-Length"]
+
+
+def test_head_reports_the_stall_too():
+    health = HealthState(stale_after_seconds=300)
+    health.started_at = health.started_at.replace(year=health.started_at.year - 1)
+    server = serve_in_background(health, 0)
+    try:
+        status, _, body = _request(server, "HEAD")
+    finally:
+        server.shutdown()
+
+    assert status == 503
+    assert body == b""

@@ -81,15 +81,30 @@ class HealthState:
 def _handler_for(state: HealthState):
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+            self._respond(with_body=True)
+
+        def do_HEAD(self) -> None:  # noqa: N802 - required by BaseHTTPRequestHandler
+            """Answer HEAD as well as GET.
+
+            BaseHTTPRequestHandler replies 501 to any method without a handler, and
+            uptime monitors send HEAD by default because it avoids transferring a body.
+            Without this the endpoint looks permanently down to the very thing watching
+            it — which is exactly what happened once deployed.
+            """
+            self._respond(with_body=False)
+
+        def _respond(self, with_body: bool) -> None:
             snapshot = state.snapshot()
             body = json.dumps(snapshot, indent=2).encode()
             # 503 when polling has stalled, so an uptime check that only reads the
             # status code still catches a process that is alive but doing nothing.
             self.send_response(200 if snapshot["status"] == "ok" else 503)
             self.send_header("Content-Type", "application/json")
+            # Sent for HEAD too: the headers must match what GET would return.
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
-            self.wfile.write(body)
+            if with_body:
+                self.wfile.write(body)
 
         def log_message(self, *args: object) -> None:
             """Silence per-request logging; a pinger every few minutes would flood it."""
