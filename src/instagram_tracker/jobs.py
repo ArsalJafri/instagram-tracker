@@ -59,18 +59,44 @@ _UNINFORMATIVE_TITLES = {
 }
 
 
-def is_uninformative(title: str) -> bool:
-    """True when a title tells us nothing about the role.
+# Titles of job *boards* rather than job postings — a search page or a careers landing
+# page, which lists many roles and describes none. `zero2sudo` links these regularly
+# ("View Jobs | Roblox" for a 2027 search, "Careers – Quantbot Technologies, LP").
+#
+# These are the most misleading titles of all: plausible enough to survive the checks
+# below, so the classifier confidently reports "not software" when there was never a
+# single job on the page to judge.
+_LISTING_TITLES = {
+    "view jobs", "jobs", "all jobs", "job search", "search jobs", "job board",
+    "careers", "career", "careers home", "open positions", "openings",
+    "job openings", "current openings", "opportunities", "browse jobs",
+    "explore jobs", "find jobs", "search results",
+}
 
-    Single words are treated as uninformative because a real posting title is never one
-    word — but a page shell, a vendor name or an opaque id frequently is.
+# Only these split a title from its site name. A plain hyphen is excluded on purpose:
+# real titles use it ("Software Engineer - Early Career", "Co-op").
+_TITLE_SEPARATORS = re.compile(r"\s*[|·—–]\s*|\s*::\s*")
+
+
+def is_uninformative(title: str) -> bool:
+    """True when a title tells us nothing about a specific role.
+
+    Single words are uninformative because a real posting title is never one word — but
+    a page shell, a vendor name or an opaque id frequently is.
+
+    A leading segment naming a job board is uninformative for a different reason: the
+    page is real and readable, it simply describes a list rather than a role.
     """
     collapsed = re.sub(r"\s+", " ", title).strip().lower()
     if not collapsed:
         return True
     if collapsed.strip(" |-–—") in _UNINFORMATIVE_TITLES:
         return True
-    return len(collapsed.split()) < 2
+    if len(collapsed.split()) < 2:
+        return True
+
+    lead = _TITLE_SEPARATORS.split(collapsed)[0].strip(" -–—,")
+    return lead in _LISTING_TITLES
 
 
 @dataclass(frozen=True)

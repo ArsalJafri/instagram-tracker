@@ -165,3 +165,45 @@ def test_explicit_seniority_is_a_clean_reject_not_a_near_miss():
 
 def test_a_relevant_job_is_never_a_near_miss():
     assert classify(details("Software Engineer, New Grad"), "https://x/1").near_miss is False
+
+
+# -- job boards and careers landing pages --------------------------------
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "View Jobs | Roblox",          # a 2027 search on Roblox's board
+        "Careers – Quantbot Technologies, LP",
+        "Jobs | Stripe",
+        "Open Positions | Acme",
+        "Search Results | Workday",
+    ],
+)
+def test_listing_pages_are_uninformative(title):
+    # These list many roles and describe none. The title is plausible enough to survive
+    # the other checks, so the classifier would confidently report "not software" about
+    # a page that never held a single job.
+    assert is_uninformative(title) is True
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Software Engineer - Early Career",
+        "Software Developer Spring Co-op 2027",
+        "Systems Engineering Intern (New York) - Summer 2027",
+        "Software Engineer | Careers",   # lead segment is the role, not the board
+        "Early Career Software Engineer – Google",
+    ],
+)
+def test_real_titles_survive_listing_detection(title):
+    assert is_uninformative(title) is False
+
+
+def test_a_job_board_url_reaches_the_review_channel():
+    url = "https://careers.roblox.com/jobs?search=2027"
+    html = '<html><head><title>View Jobs | Roblox</title></head><body></body></html>'
+
+    assert parse_html(html, url).title is None
+    assert classify(slug_details(url), url).classification is Classification.UNKNOWN

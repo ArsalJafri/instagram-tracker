@@ -78,6 +78,17 @@ Numbered junior titles count as entry-level — `Software Engineer I/II` is exac
 large employers denote it. The signals are scoped to follow a role word (`engineer i`,
 not `i`) so a stray numeral cannot match.
 
+**Job boards and careers landing pages also become `unknown`.** `zero2sudo` regularly
+links a board rather than a posting — `careers.roblox.com/jobs?search=2027` yields
+`View Jobs | Roblox`, `quantbot.com/careers` yields `Careers – Quantbot Technologies`.
+The pipeline assumes one link is one job, and a listing breaks that: the title is
+plausible enough to pass every other check, so the classifier confidently reports "not
+software" about a page that never held a single role. Only the segment *before* a
+`|`, `–` or `·` is matched against the board vocabulary, so `Software Engineer | Careers`
+and `Software Engineer - Early Career` are untouched. These reach the review channel,
+where you can open them yourself — nobody can automate "is one of these 2027 roles
+relevant?"
+
 **Unreadable pages become `unknown`, never `not_relevant`.** Client-rendered career sites
 return page chrome as the `<title>` — `JobDetail`, `search`, a vendor name. A title like
 that is worse than none, because it makes the classifier reject confidently when it never
