@@ -151,8 +151,24 @@ DISCORD_INTERNSHIP_MENTIONS=<@&111222333>
 ```
 
 Enable **Settings → Advanced → Developer Mode** in Discord, then right-click a role or
-user and *Copy ID*. `<@&ID>` is a role, `<@ID>` a user, and `@here` / `@everyone` work
-too. Prefer a role: membership is then managed in Discord instead of by redeploying.
+user and *Copy ID*. Prefer a role: membership is then managed in Discord instead of by
+redeploying.
+
+**The wrapper is mandatory.** `<@&ID>` is a role, `<@ID>` a user; `@here` and
+`@everyone` work as written. A bare id — `@1536859615256645732`, or the number alone —
+is rendered as plain text and pings nobody. Since "Copy ID" hands you the bare number,
+prefixing `@` is the natural guess and the failure is completely silent: the message
+sends, looks right, and notifies no one.
+
+The app therefore checks at startup and says so:
+
+```text
+WARNING  DISCORD_MENTIONS contains bare id(s) 1536859615256645732 — Discord renders
+         these as plain text and pings nobody. Wrap them: <@&ID> for a role,
+         <@ID> for a user.
+```
+
+If that warning is absent from the logs, the syntax is right.
 
 Two details this implementation gets right, both easy to get wrong:
 
@@ -260,6 +276,12 @@ absent, as it is locally, no socket is opened at all.
   "seconds_since_last_poll": 17, "stale_after_seconds": 300, "last_error": null }
 ```
 
+**It answers HEAD as well as GET.** Uptime monitors send HEAD by default, since it
+avoids transferring a body, and Python's `BaseHTTPRequestHandler` replies `501` to any
+verb without a handler. Without `do_HEAD` the endpoint looks permanently down to the very
+thing watching it — which is exactly what happened on first deployment, while `curl`
+(a GET) reported everything healthy.
+
 **It returns 503 once polling has stalled** — no successful poll for five poll intervals
 (minimum 300s). A process that is alive but no longer polling is the failure worth
 catching, and a permanent 200 would hide it. Because the failure shows up in the status
@@ -301,7 +323,12 @@ Steps:
    dashboard. They are marked `sync: false` so they never live in the repo. Leave
    `HEARTBEAT_URL` unset — step 4 covers it.
 4. Point **UptimeRobot** (free, 50 monitors) at the service URL on a **5-minute**
-   interval.
+   interval. Confirm it reports Up — if it says down while `curl` succeeds, check HEAD
+   specifically:
+
+   ```bash
+   curl -s -I -o /dev/null -w "HEAD -> %{http_code}\n" https://<your-service>.onrender.com/
+   ```
 
 **Use 5 minutes, not 15.** Fifteen is exactly Render's spin-down threshold, leaving no
 margin: checks drift, and one delayed or failed request lets the service sleep. Five
