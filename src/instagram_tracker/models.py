@@ -38,6 +38,67 @@ class RoleType(str, Enum):
     INTERNSHIP = "internship"
 
 
+class RoleClass(str, Enum):
+    """What kind of work this is. Independent of how the role is employed."""
+
+    SOFTWARE = "software"
+    DATA = "data"
+    QUANT = "quant"
+    IT = "it"
+    PRODUCT = "product"
+    OTHER = "other"
+
+
+class EmploymentClass(str, Enum):
+    """How the role is employed. Independent of what kind of work it is."""
+
+    INTERN = "intern"
+    FULL_TIME = "full_time"
+    CONTRACT = "contract"
+    UNKNOWN = "unknown"
+
+
+class Destination(str, Enum):
+    """The Discord channel a classification routes to."""
+
+    INTERNSHIP = "internship"
+    FULL_TIME = "new_grad"
+    REVIEW = "review"
+
+
+class ClassificationSource(str, Enum):
+    """What decided the classification, for debugging a wrong answer later."""
+
+    RULE = "rule"
+    SCORER = "scorer"
+
+
+class InputQuality(str, Enum):
+    """How much text the fetcher recovered. Gates how far a score is trusted."""
+
+    RICH = "rich"
+    POOR = "poor"
+
+
+@dataclass(frozen=True)
+class ClassificationResult:
+    """The two-axis verdict. The rest of the application consumes only this."""
+
+    role: RoleClass
+    role_confidence: float
+    employment: EmploymentClass
+    employment_confidence: float
+    destination: Destination
+    source: ClassificationSource
+    classifier_version: str
+    input_quality: InputQuality
+    # Which signals fired, most significant first. Recorded so a wrong answer can be
+    # explained without re-fetching the posting.
+    evidence: list[str] = field(default_factory=list)
+    # Set when a high-confidence rule short-circuited the scorer.
+    rule: str | None = None
+
+
 @dataclass(frozen=True)
 class Job:
     title: str | None
