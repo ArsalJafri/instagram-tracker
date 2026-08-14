@@ -22,6 +22,10 @@ from .models import Classification, Job, RoleType
 LEVEL_SIGNALS = [
     "new grad",
     "new graduate",
+    # Added 2026-08-14: NVIDIA titles its new-grad roles "New College Graduate", which
+    # neither of the two spellings above reach. The field rule matched and the level rule
+    # did not, so a literal new-grad software role was filed as a near miss.
+    "new college graduate",
     "entry level",
     "entry-level",
     "early career",
@@ -46,8 +50,18 @@ FIELD_SIGNALS = [
     "backend engineer",
     "frontend engineer",
     "full stack engineer",
+    # Spelled as one word often enough that the spaced literal above misses it.
+    "fullstack engineer",
     "data engineer",
     "machine learning engineer",
+    # Added 2026-08-14: technical roles that are software work but are not titled
+    # "software". Widening the field rule trades false negatives for false positives —
+    # a title alone cannot separate a technical Systems Engineer from a mechanical one.
+    "forward deployed engineer",
+    "systems engineer",
+    "platform engineer",
+    "site reliability",
+    "devops",
 ]
 
 # Internship signals. These satisfy the level rule on their own — an internship is
