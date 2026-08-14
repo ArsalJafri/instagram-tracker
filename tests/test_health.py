@@ -213,3 +213,19 @@ def test_a_fresh_state_reports_empty_diagnostics():
     snapshot = HealthState().snapshot()
     assert snapshot["recent"] == []
     assert snapshot["channels"] == {}
+
+
+# -- corpus capture ------------------------------------------------------
+
+
+def test_corpus_capture_is_counted_separately_from_failures():
+    # Capture swallows its own errors so a notification is never lost to it. That makes a
+    # broken write silent, so the counters are the only way to see one.
+    state = HealthState()
+    assert state.snapshot()["corpus"] == {"recorded": 0, "failed": 0}
+
+    state.record_corpus(ok=True)
+    state.record_corpus(ok=True)
+    state.record_corpus(ok=False)
+
+    assert state.snapshot()["corpus"] == {"recorded": 2, "failed": 1}

@@ -55,6 +55,11 @@ class HealthState:
         self.last_error: str | None = None
         self.polls = 0
         self.notifications = 0
+        # Corpus capture is best effort and swallows its own errors, so without a counter
+        # a broken write is invisible — the exact failure mode this project keeps hitting.
+        # The Postgres insert path differs from SQLite's, so it needs to be observable.
+        self.corpus_recorded = 0
+        self.corpus_failures = 0
 
     def record_poll(self, sent: int) -> None:
         with self._lock:
@@ -74,6 +79,13 @@ class HealthState:
                     "url": url,
                 }
             )
+
+    def record_corpus(self, ok: bool) -> None:
+        with self._lock:
+            if ok:
+                self.corpus_recorded += 1
+            else:
+                self.corpus_failures += 1
 
     def record_error(self, message: str) -> None:
         with self._lock:
@@ -96,6 +108,10 @@ class HealthState:
                 "stale_after_seconds": self.stale_after_seconds,
                 "last_error": self.last_error,
                 "channels": self.channels,
+                "corpus": {
+                    "recorded": self.corpus_recorded,
+                    "failed": self.corpus_failures,
+                },
                 "recent": list(self.recent),
             }
 

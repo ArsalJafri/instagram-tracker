@@ -159,6 +159,11 @@ class Pipeline:
             )
         except Exception:  # noqa: BLE001 - corpus capture must not break the pipeline
             log.exception("Could not record corpus entry for %s", link.canonical_url)
+            if self.health:
+                self.health.record_corpus(ok=False)
+            return
+        if self.health:
+            self.health.record_corpus(ok=True)
 
     def _record_decision(self, url: str, job, sent: bool) -> None:
         """Remember where this link went, so the health endpoint can answer for it."""

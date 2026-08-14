@@ -276,3 +276,33 @@ def test_a_corpus_failure_never_costs_a_notification(build, monkeypatch):
     assert pipeline.run_once() == 1
     assert notifier.sent == [RELEVANT_URL]
     assert db.all_observations() == []
+
+
+def test_corpus_capture_is_reported_to_health(build):
+    from instagram_tracker.health import HealthState
+
+    health = HealthState()
+    pipeline, db, _, _ = build([story("1", [RELEVANT_URL])], process_existing=True)
+    pipeline.health = health
+
+    pipeline.run_once()
+
+    assert health.snapshot()["corpus"] == {"recorded": 1, "failed": 0}
+
+
+def test_a_corpus_failure_is_visible_in_health(build, monkeypatch):
+    from instagram_tracker.health import HealthState
+
+    health = HealthState()
+    pipeline, db, _, notifier = build([story("1", [RELEVANT_URL])], process_existing=True)
+    pipeline.health = health
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("corpus table is unavailable")
+
+    monkeypatch.setattr(db, "record_observation", explode)
+    pipeline.run_once()
+
+    assert health.snapshot()["corpus"] == {"recorded": 0, "failed": 1}
+    # Still notified: the corpus is valuable, the alert is more so.
+    assert notifier.sent == [RELEVANT_URL]
