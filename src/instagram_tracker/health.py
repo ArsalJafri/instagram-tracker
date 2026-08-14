@@ -12,6 +12,7 @@ actually happening rather than merely whether the process is alive.
 
 from __future__ import annotations
 
+import collections
 import json
 import logging
 import threading
@@ -36,9 +37,19 @@ class HealthState:
     period rather than failing its host's health check on the first request.
     """
 
-    def __init__(self, stale_after_seconds: int = DEFAULT_STALE_AFTER_SECONDS) -> None:
+    def __init__(
+        self,
+        stale_after_seconds: int = DEFAULT_STALE_AFTER_SECONDS,
+        channels: dict | None = None,
+    ) -> None:
         self._lock = threading.Lock()
         self.stale_after_seconds = stale_after_seconds
+        # Which destinations are configured, as booleans — never the webhook URLs.
+        # "Is the review channel even set up?" took four rounds of guessing to answer.
+        self.channels = channels or {}
+        # The last handful of link decisions, so "why didn't X send?" is one request
+        # rather than a reconstruction from Instagram's feed and the git log.
+        self.recent: collections.deque = collections.deque(maxlen=15)
         self.started_at = datetime.now(timezone.utc)
         self.last_poll_at: datetime | None = None
         self.last_error: str | None = None
@@ -51,6 +62,18 @@ class HealthState:
             self.last_error = None
             self.polls += 1
             self.notifications += sent
+
+    def record_decision(self, url: str, title: str | None, verdict: str, sent_to: str) -> None:
+        with self._lock:
+            self.recent.appendleft(
+                {
+                    "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                    "title": title,
+                    "verdict": verdict,
+                    "sent_to": sent_to,
+                    "url": url,
+                }
+            )
 
     def record_error(self, message: str) -> None:
         with self._lock:
@@ -72,6 +95,8 @@ class HealthState:
                 "seconds_since_last_poll": round(since) if since is not None else None,
                 "stale_after_seconds": self.stale_after_seconds,
                 "last_error": self.last_error,
+                "channels": self.channels,
+                "recent": list(self.recent),
             }
 
     def is_healthy(self) -> bool:

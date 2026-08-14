@@ -84,8 +84,12 @@ links a board rather than a posting — `careers.roblox.com/jobs?search=2027` yi
 The pipeline assumes one link is one job, and a listing breaks that: the title is
 plausible enough to pass every other check, so the classifier confidently reports "not
 software" about a page that never held a single role. Only the segment *before* a
-`|`, `–` or `·` is matched against the board vocabulary, so `Software Engineer | Careers`
-and `Software Engineer - Early Career` are untouched. These reach the review channel,
+`|`, `–` or `·` is checked, and the test is compositional rather than a list of phrases:
+chrome is a lead segment built *entirely* from board vocabulary (`job`, `jobs`, `detail`,
+`details`, `careers`, `search`, `results`, `open`, `positions`, …). Enumerating phrases
+was whack-a-mole — `job detail` was listed and `Job Details | Dayforce Jobs` still slipped
+through. A real title always contains at least one word outside that vocabulary, so
+`Software Engineer | Careers` and `Software Engineer - Early Career` are untouched. These reach the review channel,
 where you can open them yourself — nobody can automate "is one of these 2027 roles
 relevant?"
 
@@ -286,6 +290,27 @@ absent, as it is locally, no socket is opened at all.
 { "status": "ok", "polls": 42, "notifications_sent": 3,
   "seconds_since_last_poll": 17, "stale_after_seconds": 300, "last_error": null }
 ```
+
+**It reports what the tracker actually decided.** `channels` shows which webhooks are
+configured, as booleans — never the URLs. `recent` holds the last fifteen link decisions
+with the title, verdict and destination. This exists because "why didn't X send?" was
+repeatedly answered by reconstructing events from Instagram's feed and the git log, when
+the tracker knew the answer all along:
+
+```json
+"channels": { "new_grad": true, "internship": true, "review": false },
+"recent": [
+  { "title": "Software Developer Spring Co-op 2027", "verdict": "relevant",
+    "sent_to": "internship", "url": "..." },
+  { "title": null, "verdict": "unknown", "sent_to": "review", "url": "..." },
+  { "title": "Senior Leader Speaker Series", "verdict": "not_relevant",
+    "sent_to": "none (silent)", "url": "..." }
+]
+```
+
+`sent_to` distinguishes the three ways nothing arrives: `none (silent)` means the rules
+rejected it outright, `none (no channel configured)` means it qualified but the webhook
+is missing, and a channel name means it was delivered.
 
 **It answers HEAD as well as GET.** Uptime monitors send HEAD by default, since it
 avoids transferring a body, and Python's `BaseHTTPRequestHandler` replies `501` to any

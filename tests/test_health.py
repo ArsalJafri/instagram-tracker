@@ -176,3 +176,40 @@ def test_head_reports_the_stall_too():
 
     assert status == 503
     assert body == b""
+
+
+# -- diagnosability ------------------------------------------------------
+
+
+def test_channels_are_reported_as_booleans_never_urls():
+    """"Is the review channel even configured?" should be one request, not guesswork."""
+    health = HealthState(channels={"new_grad": True, "internship": True, "review": False})
+    snapshot = health.snapshot()
+
+    assert snapshot["channels"] == {"new_grad": True, "internship": True, "review": False}
+    assert "http" not in json.dumps(snapshot["channels"])
+
+
+def test_recent_decisions_are_reported_newest_first():
+    health = HealthState()
+    health.record_decision("https://a", "A", "not_relevant", "none (silent)")
+    health.record_decision("https://b", "B", "relevant", "internship")
+
+    recent = health.snapshot()["recent"]
+    assert [r["url"] for r in recent] == ["https://b", "https://a"]
+    assert recent[0]["sent_to"] == "internship"
+    assert recent[1]["verdict"] == "not_relevant"
+
+
+def test_recent_decisions_are_bounded():
+    health = HealthState()
+    for i in range(40):
+        health.record_decision(f"https://{i}", str(i), "not_relevant", "none (silent)")
+
+    assert len(health.snapshot()["recent"]) == 15
+
+
+def test_a_fresh_state_reports_empty_diagnostics():
+    snapshot = HealthState().snapshot()
+    assert snapshot["recent"] == []
+    assert snapshot["channels"] == {}

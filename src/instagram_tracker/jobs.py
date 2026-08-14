@@ -66,11 +66,18 @@ _UNINFORMATIVE_TITLES = {
 # These are the most misleading titles of all: plausible enough to survive the checks
 # below, so the classifier confidently reports "not software" when there was never a
 # single job on the page to judge.
-_LISTING_TITLES = {
-    "view jobs", "jobs", "all jobs", "job search", "search jobs", "job board",
-    "careers", "career", "careers home", "open positions", "openings",
-    "job openings", "current openings", "opportunities", "browse jobs",
-    "explore jobs", "find jobs", "search results",
+# Enumerating whole phrases was whack-a-mole: "job detail" was listed and "Job Details |
+# Dayforce Jobs" still slipped through, because every ATS words its chrome differently.
+# So the test is compositional instead — a lead segment built *only* from this vocabulary
+# describes a board, not a role. A real title always contains at least one word that is
+# not in here ("software", "engineer", a product name).
+_BOARD_WORDS = {
+    "job", "jobs", "detail", "details", "career", "careers", "search",
+    "searches", "view", "viewing", "open", "opening", "openings", "position",
+    "positions", "role", "roles", "vacancy", "vacancies", "board", "boards",
+    "listing", "listings", "opportunity", "opportunities", "browse", "explore",
+    "find", "result", "results", "home", "apply", "application", "applications",
+    "all", "current", "our", "the", "at", "and", "page", "portal", "overview",
 }
 
 # Only these split a title from its site name. A plain hyphen is excluded on purpose:
@@ -96,7 +103,8 @@ def is_uninformative(title: str) -> bool:
         return True
 
     lead = _TITLE_SEPARATORS.split(collapsed)[0].strip(" -–—,")
-    return lead in _LISTING_TITLES
+    words = re.findall(r"[a-z0-9]+", lead)
+    return bool(words) and all(word in _BOARD_WORDS for word in words)
 
 
 @dataclass(frozen=True)

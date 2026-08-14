@@ -29,12 +29,14 @@ class Pipeline:
         source: StorySource,
         fetcher: JobFetcher,
         notifier: DiscordNotifier,
+        health=None,
     ) -> None:
         self.config = config
         self.db = db
         self.source = source
         self.fetcher = fetcher
         self.notifier = notifier
+        self.health = health
 
     def run_once(self) -> int:
         """Poll once. Returns the number of notifications sent."""
@@ -108,17 +110,33 @@ class Pipeline:
         # entirely, and silently dropping those links has already cost a real job. The
         # notifier decides whether a review channel exists; with none configured it
         # declines and nothing is recorded.
-        if job.classification is Classification.NOT_RELEVANT and not job.near_miss:
-            return False
-        if self.db.is_notified(link.canonical_url):
-            return False
-        if not self.notifier.notify(job, story.username):
-            return False
-        self.db.record_notification(link.canonical_url, story.story_id)
-        return True
+        silent = job.classification is Classification.NOT_RELEVANT and not job.near_miss
+        sent = False
+        if not silent and not self.db.is_notified(link.canonical_url):
+            sent = self.notifier.notify(job, story.username)
+            if sent:
+                self.db.record_notification(link.canonical_url, story.story_id)
+
+        self._record_decision(link.canonical_url, job, sent, silent)
+        return sent
+
+    def _record_decision(self, url: str, job, sent: bool, silent: bool) -> None:
+        """Remember where this link went, so the health endpoint can answer for it."""
+        if not self.health:
+            return
+        if silent:
+            destination = "none (silent)"
+        elif not sent:
+            destination = "none (no channel configured)"
+        elif job.classification is Classification.UNKNOWN or job.near_miss:
+            destination = "review"
+        else:
+            destination = job.role_type.value
+        verdict = "near_miss" if job.near_miss else job.classification.value
+        self.health.record_decision(url, job.title, verdict, destination)
 
 
-def build_pipeline(config: Config, db: Database) -> Pipeline:
+def build_pipeline(config: Config, db: Database, health=None) -> Pipeline:
     from .sources import build_story_source
 
     return Pipeline(
@@ -136,4 +154,5 @@ def build_pipeline(config: Config, db: Database) -> Pipeline:
             internship_mentions=config.discord_internship_mentions,
             unknown_webhook_url=config.discord_unknown_webhook_url,
         ),
+        health=health,
     )

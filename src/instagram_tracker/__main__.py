@@ -55,12 +55,17 @@ def main(argv: list[str] | None = None) -> int:
     logging.info("State: %s", "PostgreSQL" if is_postgres_target(target) else f"SQLite {target}")
 
     with Database(target) as db:
-        pipeline = build_pipeline(config, db)
         # Tolerate a few missed polls before reporting unhealthy, with a floor so a
         # short interval does not make the check hair-trigger.
         health = HealthState(
-            stale_after_seconds=max(config.poll_interval_seconds * 5, 300)
+            stale_after_seconds=max(config.poll_interval_seconds * 5, 300),
+            channels={
+                "new_grad": bool(config.discord_webhook_url),
+                "internship": bool(config.discord_internship_webhook_url),
+                "review": bool(config.discord_unknown_webhook_url),
+            },
         )
+        pipeline = build_pipeline(config, db, health=health)
         poller = Poller(
             pipeline,
             config.poll_interval_seconds,
