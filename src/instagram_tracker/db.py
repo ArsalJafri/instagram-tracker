@@ -19,6 +19,7 @@ placeholders, a few column types and the migration probe differ.
 
 from __future__ import annotations
 
+import json
 import logging
 import sqlite3
 from datetime import datetime, timezone
@@ -27,6 +28,67 @@ from pathlib import Path
 log = logging.getLogger(__name__)
 
 POSTGRES_SCHEMES = ("postgres://", "postgresql://")
+
+# The corpus tables. Deliberately separate from `jobs`, which updates in place and so
+# cannot answer "what did the classifier think at the time".
+#
+# `job_observations` is immutable: the posting exactly as it was read. `raw_text` is
+# stored unnormalized on purpose — normalization rules will change, and a corpus holding
+# only the normalized form is silently invalidated by every one of those changes.
+#
+# Many runs may point at one observation. That is the point: a new classifier version can
+# be replayed over the frozen corpus and compared against the old one on identical input.
+_OBSERVATIONS = """
+    CREATE TABLE IF NOT EXISTS job_observations (
+        id                       {pk},
+        canonical_url            TEXT NOT NULL,
+        story_id                 TEXT,
+        title                    TEXT,
+        raw_text                 TEXT,
+        fetch_source             TEXT,
+        company                  TEXT,
+        location                 TEXT,
+        declared_employment_type TEXT,
+        observed_at              TEXT NOT NULL
+    )
+"""
+
+_RUNS = """
+    CREATE TABLE IF NOT EXISTS classification_runs (
+        id                    {pk},
+        observation_id        {fk} NOT NULL,
+        classifier_version    TEXT NOT NULL,
+        role                  TEXT NOT NULL,
+        role_confidence       {real} NOT NULL,
+        employment            TEXT NOT NULL,
+        employment_confidence {real} NOT NULL,
+        destination           TEXT NOT NULL,
+        classification_source TEXT NOT NULL,
+        input_quality         TEXT,
+        rule                  TEXT,
+        evidence              TEXT,
+        created_at            TEXT NOT NULL
+    )
+"""
+
+_CORRECTIONS = """
+    CREATE TABLE IF NOT EXISTS corrections (
+        id              {pk},
+        observation_id  {fk} NOT NULL,
+        role_label      TEXT,
+        employment_label TEXT,
+        note            TEXT,
+        corrected_at    TEXT NOT NULL
+    )
+"""
+
+_OBSERVATION_INDEX = """
+    CREATE INDEX IF NOT EXISTS idx_observations_url ON job_observations (canonical_url)
+"""
+
+# Stored text is capped so a pathological page cannot bloat a row. The fetcher already
+# truncates at 4000; this is the backstop.
+MAX_RAW_TEXT = 8000
 
 _SQLITE_SCHEMA = [
     """
@@ -66,6 +128,10 @@ _SQLITE_SCHEMA = [
         sent_at       TEXT NOT NULL
     )
     """,
+    _OBSERVATIONS.format(pk="INTEGER PRIMARY KEY AUTOINCREMENT"),
+    _RUNS.format(pk="INTEGER PRIMARY KEY AUTOINCREMENT", fk="INTEGER", real="REAL"),
+    _CORRECTIONS.format(pk="INTEGER PRIMARY KEY AUTOINCREMENT", fk="INTEGER"),
+    _OBSERVATION_INDEX,
 ]
 
 _POSTGRES_SCHEMA = [
@@ -106,6 +172,10 @@ _POSTGRES_SCHEMA = [
         sent_at       TEXT NOT NULL
     )
     """,
+    _OBSERVATIONS.format(pk="BIGSERIAL PRIMARY KEY"),
+    _RUNS.format(pk="BIGSERIAL PRIMARY KEY", fk="BIGINT", real="DOUBLE PRECISION"),
+    _CORRECTIONS.format(pk="BIGSERIAL PRIMARY KEY", fk="BIGINT"),
+    _OBSERVATION_INDEX,
 ]
 
 
@@ -332,11 +402,131 @@ class Database:
         )
         self.conn.commit()
 
+    # -- corpus ----------------------------------------------------------
+
+    def record_observation(
+        self,
+        canonical_url: str,
+        story_id: str | None,
+        title: str | None,
+        raw_text: str,
+        fetch_source: str,
+        company: str | None = None,
+        location: str | None = None,
+        declared_employment_type: str | None = None,
+    ) -> int:
+        """Store a posting exactly as it was read. Never updated afterwards."""
+        params = (
+            canonical_url,
+            story_id,
+            title,
+            (raw_text or "")[:MAX_RAW_TEXT],
+            fetch_source,
+            company,
+            location,
+            declared_employment_type,
+            _now(),
+        )
+        sql = (
+            "INSERT INTO job_observations (canonical_url, story_id, title, raw_text, "
+            "fetch_source, company, location, declared_employment_type, observed_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        observation_id = self._insert_returning_id(sql, params)
+        self.conn.commit()
+        return observation_id
+
+    def record_classification_run(
+        self,
+        observation_id: int,
+        classifier_version: str,
+        role: str,
+        role_confidence: float,
+        employment: str,
+        employment_confidence: float,
+        destination: str,
+        classification_source: str,
+        input_quality: str | None = None,
+        rule: str | None = None,
+        evidence: list[str] | None = None,
+    ) -> int:
+        """Append one classifier verdict. Several may point at one observation."""
+        sql = (
+            "INSERT INTO classification_runs (observation_id, classifier_version, role, "
+            "role_confidence, employment, employment_confidence, destination, "
+            "classification_source, input_quality, rule, evidence, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"
+        )
+        run_id = self._insert_returning_id(
+            sql,
+            (
+                observation_id,
+                classifier_version,
+                role,
+                float(role_confidence),
+                employment,
+                float(employment_confidence),
+                destination,
+                classification_source,
+                input_quality,
+                rule,
+                json.dumps(evidence or []),
+                _now(),
+            ),
+        )
+        self.conn.commit()
+        return run_id
+
+    def record_correction(
+        self,
+        observation_id: int,
+        role_label: str | None,
+        employment_label: str | None,
+        note: str | None = None,
+    ) -> None:
+        """Append a human label. The expensive, irreplaceable part of the corpus."""
+        self._execute(
+            "INSERT INTO corrections (observation_id, role_label, employment_label, "
+            "note, corrected_at) VALUES (?, ?, ?, ?, ?)",
+            (observation_id, role_label, employment_label, note, _now()),
+        )
+        self.conn.commit()
+
+    def _insert_returning_id(self, sql: str, params: tuple) -> int:
+        """The one place the two engines genuinely disagree about inserts."""
+        if self.is_postgres:
+            row = self._execute(f"{sql} RETURNING id", params).fetchone()
+            return int(row["id"])
+        return int(self._execute(sql, params).lastrowid)
+
+    def all_observations(self) -> list[dict]:
+        return [dict(row) for row in self._execute(
+            "SELECT * FROM job_observations ORDER BY id"
+        )]
+
+    def all_classification_runs(self) -> list[dict]:
+        return [dict(row) for row in self._execute(
+            "SELECT * FROM classification_runs ORDER BY id"
+        )]
+
+    def all_corrections(self) -> list[dict]:
+        return [dict(row) for row in self._execute(
+            "SELECT * FROM corrections ORDER BY id"
+        )]
+
     # -- health ----------------------------------------------------------
 
     def counts(self) -> dict[str, int]:
         """Row counts per table, for the health endpoint."""
-        tables = ("processed_stories", "discovered_links", "jobs", "notifications")
+        tables = (
+            "processed_stories",
+            "discovered_links",
+            "jobs",
+            "notifications",
+            "job_observations",
+            "classification_runs",
+            "corrections",
+        )
         result = {}
         for table in tables:
             row = self._fetchone(f"SELECT COUNT(*) AS n FROM {table}")
