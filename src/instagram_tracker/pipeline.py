@@ -106,32 +106,28 @@ class Pipeline:
             job.reason,
         )
 
-        # Unreadable postings are worth surfacing too — some sites block plain fetches
-        # entirely, and silently dropping those links has already cost a real job. The
-        # notifier decides whether a review channel exists; with none configured it
-        # declines and nothing is recorded.
-        silent = job.classification is Classification.NOT_RELEVANT and not job.near_miss
+        # Every link is offered to the notifier. A confirmed match goes to its role
+        # channel; everything else goes to the review channel, so a link @zero2sudo
+        # posted is never silently dropped.
         sent = False
-        if not silent and not self.db.is_notified(link.canonical_url):
+        if not self.db.is_notified(link.canonical_url):
             sent = self.notifier.notify(job, story.username)
             if sent:
                 self.db.record_notification(link.canonical_url, story.story_id)
 
-        self._record_decision(link.canonical_url, job, sent, silent)
+        self._record_decision(link.canonical_url, job, sent)
         return sent
 
-    def _record_decision(self, url: str, job, sent: bool, silent: bool) -> None:
+    def _record_decision(self, url: str, job, sent: bool) -> None:
         """Remember where this link went, so the health endpoint can answer for it."""
         if not self.health:
             return
-        if silent:
-            destination = "none (silent)"
-        elif not sent:
+        if not sent:
             destination = "none (no channel configured)"
-        elif job.classification is Classification.UNKNOWN or job.near_miss:
-            destination = "review"
-        else:
+        elif job.classification is Classification.RELEVANT:
             destination = job.role_type.value
+        else:
+            destination = "review"
         verdict = "near_miss" if job.near_miss else job.classification.value
         self.health.record_decision(url, job.title, verdict, destination)
 

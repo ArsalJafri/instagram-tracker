@@ -123,11 +123,17 @@ def test_process_existing_on_startup_notifies_immediately(build):
     assert notifier.sent == [RELEVANT_URL]
 
 
-def test_irrelevant_jobs_are_recorded_but_not_notified(build):
+def test_irrelevant_jobs_are_recorded_and_sent_for_review(build):
+    """Every link surfaces somewhere.
+
+    Deciding which rejections were worth showing repeatedly guessed wrong, and the
+    misses were invisible — so anything that is not a confirmed match now goes to the
+    review channel rather than being dropped.
+    """
     pipeline, db, _, notifier = build([story("1", [BORING_URL])], process_existing=True)
 
-    assert pipeline.run_once() == 0
-    assert notifier.sent == []
+    assert pipeline.run_once() == 1
+    assert notifier.sent == [BORING_URL]
     row = db.conn.execute(
         "SELECT classification FROM jobs WHERE canonical_url = ?", (BORING_URL,)
     ).fetchone()

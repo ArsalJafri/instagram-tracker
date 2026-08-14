@@ -127,7 +127,23 @@ blocks it too, the result is the `unknown` it would have been anyway. That last 
 real: Tesla refuses the proxy as well, and the proxy reports it in-band with a 200 and an
 `Access Denied` title, which is detected rather than mistaken for a job.
 
-**Near misses go to the review channel too.** A posting that satisfies exactly one of
+**Every link that is not a confirmed match goes to the review channel.** If `zero2sudo`
+posted it, it surfaces somewhere. Judging which rejections were "interesting enough"
+guessed wrong repeatedly, and the misses were invisible by construction — you only notice
+an alert that never arrived if you happen to be watching Instagram yourself.
+
+| Outcome | Channel | Headline |
+| --- | --- | --- |
+| relevant, new grad | `DISCORD_WEBHOOK_URL` | New entry-level software role |
+| relevant, internship | `DISCORD_INTERNSHIP_WEBHOOK_URL` | New software internship |
+| near miss | review | Near match — matched one rule but not the other |
+| unreadable | review | Could not read this posting — check it manually |
+| no match | review | Other link — did not match the rules |
+
+Each has its own embed colour, and every review-channel alert carries a **Why** field
+with the classifier's reason. Only confirmed matches ping anyone.
+
+**Near misses are still labelled separately.** A posting that satisfies exactly one of
 the two rules — an internship or entry-level signal without a software one, or a software
 signal with no level stated — is worth a glance but not an alert. `zero2sudo` posts a lot
 of business-analyst and product-management internships, which are genuine early-career

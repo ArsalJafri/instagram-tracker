@@ -149,3 +149,60 @@ def test_near_misses_stay_silent_without_a_review_channel():
     session = FakeSession()
     assert notifier(session, unknown="").notify(near_miss_job(), "zero2sudo") is False
     assert session.calls == []
+
+
+# -- everything else -----------------------------------------------------
+
+
+def plain_reject():
+    return Job(
+        title="Home | Direct Consideration Newsletter",
+        company=None,
+        location=None,
+        classification=Classification.NOT_RELEVANT,
+        url="https://directconsideration.beehiiv.com/",
+        reason="no software or computer-science signal",
+        near_miss=False,
+    )
+
+
+def test_a_plain_rejection_also_reaches_the_review_channel():
+    # Nothing @zero2sudo links should vanish. Judging which rejections were worth
+    # showing guessed wrong repeatedly, and the misses were invisible by construction.
+    session = FakeSession()
+    assert notifier(session).notify(plain_reject(), "zero2sudo") is True
+    assert session.calls[0][0] == "https://review.test"
+
+
+def test_a_plain_rejection_is_labelled_as_other():
+    payload = build_payload(plain_reject(), "zero2sudo")
+
+    assert payload["content"] == "Other link — did not match the rules"
+    why = {f["name"]: f["value"] for f in payload["embeds"][0]["fields"]}["Why"]
+    assert "no software" in why
+
+
+def test_the_three_review_kinds_are_visually_distinct():
+    colors = {
+        build_payload(unreadable(), "z")["embeds"][0]["color"],
+        build_payload(near_miss_job(), "z")["embeds"][0]["color"],
+        build_payload(plain_reject(), "z")["embeds"][0]["color"],
+        build_payload(relevant(), "z")["embeds"][0]["color"],
+    }
+    assert len(colors) == 4, "each outcome needs its own colour"
+
+
+def test_no_review_link_ever_pings():
+    session = FakeSession()
+    n = notifier(session)
+    for job in (unreadable(), near_miss_job(), plain_reject()):
+        n.notify(job, "zero2sudo")
+    assert all(call[1]["allowed_mentions"] == {"parse": []} for call in session.calls)
+
+
+def test_matches_still_ping_and_route_normally():
+    session = FakeSession()
+    notifier(session).notify(relevant(RoleType.NEW_GRAD), "zero2sudo")
+
+    assert session.calls[0][0] == "https://main.test"
+    assert session.calls[0][1]["content"].startswith("<@&123>")
