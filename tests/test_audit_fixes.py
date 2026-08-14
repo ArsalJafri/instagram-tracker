@@ -50,7 +50,7 @@ def test_a_bare_numeral_does_not_imply_entry_level():
 def test_seniority_still_beats_a_numbered_title():
     job = classify(details("Senior Software Engineer II"), "https://x/1")
     assert job.classification is Classification.NOT_RELEVANT
-    assert "not entry-level" in job.reason
+    assert "disqualified:senior" in job.reason
 
 
 # -- schema.org employmentType -------------------------------------------
@@ -65,7 +65,7 @@ def test_schema_org_employment_types_reject(employment_type):
         "https://x/1",
     )
     assert job.classification is Classification.NOT_RELEVANT
-    assert "not full-time" in job.reason
+    assert "employment=contract" in job.reason
 
 
 def test_full_time_metadata_still_qualifies():
@@ -151,9 +151,24 @@ def test_newsletters_and_events_are_not_near_misses():
         "Home | Direct Consideration Newsletter",
         "ETCH - Inside Micron & the Semiconductor Industry",
         "Future of Asset Management Virtual Series",
-        "2027 Quantitative Prediction Markets Research Summer Analyst",
     ]:
         assert classify(details(title), "https://x/1").near_miss is False, title
+
+
+def test_a_real_posting_matching_one_axis_is_a_near_miss():
+    """Reclassified by the 2026-08-14 redesign, and correctly.
+
+    Under the single exclusive-or rule this scored as neither software nor levelled, so
+    it read as an event listing. It is a real quant internship: one axis lands squarely
+    (employment), the other does not (role), which is precisely what a near miss is.
+    """
+    job = classify(
+        details("2027 Quantitative Prediction Markets Research Summer Analyst"),
+        "https://x/1",
+    )
+
+    assert job.classification is Classification.NOT_RELEVANT
+    assert job.near_miss is True
 
 
 def test_explicit_seniority_is_a_clean_reject_not_a_near_miss():

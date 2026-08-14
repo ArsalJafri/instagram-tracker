@@ -22,12 +22,15 @@ from dataclasses import dataclass
 
 from .jobs import JobDetails
 from .models import (
+    Classification,
     ClassificationResult,
     ClassificationSource,
     Destination,
     EmploymentClass,
     InputQuality,
+    Job,
     RoleClass,
+    RoleType,
 )
 
 # Bump whenever vocabulary, weights or thresholds change. Stored on every run so a later
@@ -90,8 +93,9 @@ ROLE_SIGNALS: dict[RoleClass, list[Signal]] = {
         _sig("sre", 2.0, ("sre",), title_only=True),
         _sig("devops", 2.5, ("devops",), title_only=True),
         _sig("platform", 2.0, ("platform",), _BUILDS, title_only=True),
-        # Weaker: "systems engineer" is a real software title and also a mechanical one.
-        _sig("systems", 1.5, ("systems",), _BUILDS, title_only=True),
+        # Weaker than the rest: "systems engineer" is a real software title and also a
+        # mechanical one. Still enough on its own to clear the routing threshold.
+        _sig("systems", 2.0, ("systems",), _BUILDS, title_only=True),
         # An ML engineer builds software. Analyst-flavoured data work scores as DATA.
         _sig("ml-engineer", 3.0, ("machine learning", "deep learning"), _BUILDS, title_only=True),
         _sig("data-engineer", 3.0, ("data",), ("engineer", "engineering"), title_only=True),
@@ -183,12 +187,7 @@ EMPLOYMENT_SIGNALS: dict[EmploymentClass, list[Signal]] = {
         _sig("grad-programme", 2.0, ("graduate development program", "rotational program",
                                      "graduate program"), title_only=True),
         _sig("campus-hire", 1.5, ("campus hire",)),
-        # Seniority defeats the full-time rule, never the internship one: "Senior Software
-        # Engineer (Full-Time)" must not reach the new-grad channel on the strength of
-        # its employment type. "Product Manager Intern" trips `manager` while plainly
-        # being an internship, so manager is scoped here where it cannot do that harm.
-        _sig("not-senior", -3.0, ("senior", "staff", "principal", "lead"), title_only=True),
-        _sig("not-management", -3.0, ("manager", "director", "head", "vp"), title_only=True),
+        _sig("associate", 2.0, ("associate",), title_only=True),
     ],
     EmploymentClass.CONTRACT: [
         _sig("contract", 2.5, ("contract",), title_only=True),
@@ -261,6 +260,27 @@ def _confidence(totals: dict) -> tuple[object, float]:
 # would be theatre; anything arguable belongs in the vocabulary instead.
 
 
+# Words that settle the question outright, checked against the title after scoring.
+# They are not negative weights: an employer declaring FULL_TIME on a Senior role would
+# otherwise route it, because the structured-employment rule outranks any score.
+_SENIORITY = ("senior", "staff", "principal", "lead", "distinguished")
+_MANAGEMENT = ("manager", "director", "head", "vp", "president")
+
+
+def _disqualifier(title: str, employment: EmploymentClass) -> str | None:
+    """A seniority or management word that no amount of evidence should override."""
+    for word in _SENIORITY:
+        if _entry_matches(title, word):
+            return word
+    # "Product Manager Intern" trips `manager` while plainly being an internship, so a
+    # management word is only disqualifying when the role is not an internship.
+    if employment is not EmploymentClass.INTERN:
+        for word in _MANAGEMENT:
+            if _entry_matches(title, word):
+                return word
+    return None
+
+
 def _employment_rule(employment_field: str, body: str) -> tuple[EmploymentClass, str] | None:
     declared = normalize(employment_field)
     if declared:
@@ -310,20 +330,41 @@ def classify_job(
         source = ClassificationSource.RULE
         employment_evidence.insert(0, f"rule:{rule}")
 
+    # A contract or part-time signal in the title vetoes rather than competes. Left to
+    # scoring, "New Grad Software Engineer (Contract)" is won by the new-grad signal and
+    # routed as a permanent role.
+    contract_total = employment_totals[EmploymentClass.CONTRACT]
+    if contract_total > 0 and employment is not EmploymentClass.CONTRACT:
+        employment = EmploymentClass.CONTRACT
+        employment_confidence = min(1.0, contract_total / SATURATION)
+        source = ClassificationSource.RULE
+        rule = rule or "contract-veto"
+        employment_evidence.insert(0, "veto:contract")
+
     # A title-less posting was never read. Scoring its empty text would manufacture a
     # verdict about a page nobody saw, so it goes to review regardless of the numbers.
     if not details.title:
         role, role_confidence = RoleClass.OTHER, 0.0
         employment, employment_confidence = EmploymentClass.UNKNOWN, 0.0
 
+    disqualifier = _disqualifier(title, employment)
+    if disqualifier:
+        source = ClassificationSource.RULE
+        rule = rule or f"disqualified-{disqualifier}"
+        employment_evidence.insert(0, f"disqualified:{disqualifier}")
+
     penalty = poor_input_penalty if quality is InputQuality.POOR else 0.0
-    destination = _route(
-        role,
-        role_confidence,
-        employment,
-        employment_confidence,
-        role_threshold + penalty,
-        employment_threshold + penalty,
+    destination = (
+        Destination.REVIEW
+        if disqualifier
+        else _route(
+            role,
+            role_confidence,
+            employment,
+            employment_confidence,
+            role_threshold + penalty,
+            employment_threshold + penalty,
+        )
     )
 
     return ClassificationResult(
@@ -335,6 +376,7 @@ def classify_job(
         source=source,
         classifier_version=CLASSIFIER_VERSION,
         input_quality=quality,
+        fetch_source=details.source,
         evidence=(role_evidence + employment_evidence)[:12],
         rule=rule,
     )
@@ -357,3 +399,73 @@ def _route(
     if employment is EmploymentClass.FULL_TIME:
         return Destination.FULL_TIME
     return Destination.REVIEW
+
+
+# -- adapting to the notification layer ----------------------------------
+#
+# The notifier speaks in `Job`, and its embeds, colours and headlines are unchanged by
+# this redesign. Rather than rewrite that layer, the two-axis result is projected onto it
+# here, in one place, so classification stays the only thing that knows about scores.
+
+_ROUTED = {
+    Destination.INTERNSHIP: RoleType.INTERNSHIP,
+    Destination.FULL_TIME: RoleType.NEW_GRAD,
+}
+
+
+def explain(result: ClassificationResult) -> str:
+    """A one-line account of the verdict, shown in the review channel."""
+    parts = [
+        f"role={result.role.value} ({result.role_confidence:.2f})",
+        f"employment={result.employment.value} ({result.employment_confidence:.2f})",
+        f"via {result.rule or result.source.value}",
+        f"input={result.input_quality.value} ({result.fetch_source or 'unknown'})",
+    ]
+    if result.evidence:
+        parts.append("evidence: " + ", ".join(result.evidence[:6]))
+    return " · ".join(parts)
+
+
+def to_job(result: ClassificationResult, details: JobDetails, url: str) -> Job:
+    """Project a two-axis result onto the shape the notifier already consumes."""
+    if (role_type := _ROUTED.get(result.destination)) is not None:
+        return Job(
+            title=details.title,
+            company=details.company,
+            location=details.location,
+            classification=Classification.RELEVANT,
+            url=url,
+            reason=explain(result),
+            role_type=role_type,
+        )
+
+    if not details.title:
+        # Nothing was recoverable, so there is no basis to judge the role either way.
+        return Job(
+            title=None,
+            company=details.company,
+            location=details.location,
+            classification=Classification.UNKNOWN,
+            url=url,
+            reason="no title could be extracted from the page or URL",
+        )
+
+    # "Near miss" now means exactly one axis landed somewhere useful — a genuine
+    # early-career role that is not software, or a software role with no level stated.
+    # Under the old exclusive-or these two were indistinguishable.
+    software = result.role is RoleClass.SOFTWARE
+    placed = result.employment in (EmploymentClass.INTERN, EmploymentClass.FULL_TIME)
+    # A seniority word or a contract declaration settles the question, so the posting is
+    # a clean reject rather than something worth eyeballing.
+    disqualified = any(item.startswith("disqualified:") for item in result.evidence) or (
+        result.employment is EmploymentClass.CONTRACT
+    )
+    return Job(
+        title=details.title,
+        company=details.company,
+        location=details.location,
+        classification=Classification.NOT_RELEVANT,
+        url=url,
+        reason=explain(result),
+        near_miss=(software != placed) and not disqualified,
+    )

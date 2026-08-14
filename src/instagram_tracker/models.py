@@ -92,6 +92,10 @@ class ClassificationResult:
     source: ClassificationSource
     classifier_version: str
     input_quality: InputQuality
+    # How the posting was read — json-ld, rendered, metadata, slug or none. Kept beside
+    # the quality bucket because "it failed on a URL slug" and "it failed on a full
+    # description" are different failures worth telling apart later.
+    fetch_source: str = ""
     # Which signals fired, most significant first. Recorded so a wrong answer can be
     # explained without re-fetching the posting.
     evidence: list[str] = field(default_factory=list)

@@ -61,7 +61,7 @@ def test_employment_type_metadata_can_reject():
         URL,
     )
     assert job.classification is Classification.NOT_RELEVANT
-    assert "not full-time" in job.reason
+    assert "employment=contract" in job.reason
 
 
 def test_negatives_in_the_description_do_not_reject():
@@ -90,7 +90,7 @@ def test_unfetchable_page_with_an_id_only_slug_is_unknown_not_rejected():
 def test_slug_only_match_is_flagged_in_the_reason():
     job = classify(details("New Grad Software Engineer", source="slug"), URL)
     assert job.classification is Classification.RELEVANT
-    assert "URL slug" in job.reason
+    assert "(slug)" in job.reason
 
 
 def test_job_carries_details_through():

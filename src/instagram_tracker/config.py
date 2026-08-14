@@ -42,6 +42,14 @@ class Config:
     # Rendering proxy used only when a page cannot be read any other way. `{url}` is
     # replaced with the target; empty disables the fallback entirely.
     render_proxy_url: str = DEFAULT_RENDER_PROXY
+    # Confidence a classification must reach before it routes anywhere but review. These
+    # are bounded scores, not calibrated probabilities, so the values are tuned against
+    # observed classifications rather than derived. Kept here, not scattered in the code.
+    role_confidence_threshold: float = 0.60
+    employment_confidence_threshold: float = 0.55
+    # Added to both thresholds when the fetcher recovered little text. A slug posting is
+    # a handful of words off a URL path; scoring it confidently is overconfidence.
+    poor_input_confidence_penalty: float = 0.15
 
     @property
     def database_target(self) -> str | Path:
@@ -68,4 +76,13 @@ class Config:
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
             bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "3600")),
             render_proxy_url=os.getenv("RENDER_PROXY_URL", DEFAULT_RENDER_PROXY),
+            role_confidence_threshold=float(
+                os.getenv("ROLE_CONFIDENCE_THRESHOLD", "0.60")
+            ),
+            employment_confidence_threshold=float(
+                os.getenv("EMPLOYMENT_CONFIDENCE_THRESHOLD", "0.55")
+            ),
+            poor_input_confidence_penalty=float(
+                os.getenv("POOR_INPUT_CONFIDENCE_PENALTY", "0.15")
+            ),
         )

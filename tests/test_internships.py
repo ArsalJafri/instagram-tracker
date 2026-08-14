@@ -55,12 +55,12 @@ def test_new_grad_roles_are_still_tagged_new_grad():
 
     assert job.classification is Classification.RELEVANT
     assert job.role_type is RoleType.NEW_GRAD
-    assert "entry-level" in job.reason
+    assert "employment=full_time" in job.reason
 
 
 def test_internship_reason_names_the_signal():
     job = classify(details("Software Engineering Intern"), URL)
-    assert "internship (intern)" in job.reason
+    assert "intern:intern" in job.reason
 
 
 # The inflection set is deliberately bounded. Open-ended suffix matching would make
@@ -80,7 +80,7 @@ def test_internal_does_not_register_as_an_internship_signal():
     job = classify(details("Internal Tools Software Engineer"), URL)
 
     assert job.classification is Classification.NOT_RELEVANT
-    assert job.reason == "no entry-level, new-grad or internship signal"
+    assert "employment=unknown" in job.reason
 
 
 def test_contract_and_part_time_still_reject():
@@ -95,7 +95,7 @@ def test_contract_and_part_time_still_reject():
 def test_seniority_still_rejects_an_internship_title():
     job = classify(details("Senior Software Engineering Intern"), URL)
     assert job.classification is Classification.NOT_RELEVANT
-    assert "not entry-level" in job.reason
+    assert "disqualified:senior" in job.reason
 
 
 def test_employment_type_metadata_marks_an_internship():
@@ -115,7 +115,7 @@ def test_internship_mentioned_only_in_the_description_does_not_retag():
 def test_a_plain_software_role_with_no_level_signal_is_still_rejected():
     job = classify(details("Software Engineer"), URL)
     assert job.classification is Classification.NOT_RELEVANT
-    assert "internship" in job.reason
+    assert "employment=unknown" in job.reason
 
 
 # -- routing -------------------------------------------------------------
