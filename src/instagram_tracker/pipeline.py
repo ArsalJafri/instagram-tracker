@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 
-from .classifier import classify
+from .classification import classify_job, to_job
 from .config import Config
 from .db import Database
 from .jobs import JobFetcher
@@ -88,7 +88,15 @@ class Pipeline:
         self.db.record_link(link.canonical_url, link.original_url, story.story_id)
 
         details = self.fetcher.fetch(link.canonical_url)
-        job = classify(details, link.canonical_url)
+        result = classify_job(
+            details,
+            link.canonical_url,
+            role_threshold=self.config.role_confidence_threshold,
+            employment_threshold=self.config.employment_confidence_threshold,
+            poor_input_penalty=self.config.poor_input_confidence_penalty,
+        )
+        job = to_job(result, details, link.canonical_url)
+        self._record_corpus(story, link, details, result)
         self.db.record_job(
             link.canonical_url,
             job.title,
@@ -101,7 +109,7 @@ class Pipeline:
         log.info(
             "%s -> %s (%s): %s",
             link.canonical_url,
-            job.classification.value,
+            result.destination.value,
             job.title or "unknown title",
             job.reason,
         )
@@ -117,6 +125,40 @@ class Pipeline:
 
         self._record_decision(link.canonical_url, job, sent)
         return sent
+
+    def _record_corpus(self, story: Story, link: Link, details, result) -> None:
+        """Persist the posting and the verdict for later labelling and retraining.
+
+        Failing to store training data must never cost a notification, so this is best
+        effort: the corpus is valuable, but not more valuable than the alert the user is
+        waiting for.
+        """
+        try:
+            observation_id = self.db.record_observation(
+                canonical_url=link.canonical_url,
+                story_id=story.story_id,
+                title=details.title,
+                raw_text=details.text,
+                fetch_source=details.source,
+                company=details.company,
+                location=details.location,
+                declared_employment_type=details.employment_type,
+            )
+            self.db.record_classification_run(
+                observation_id=observation_id,
+                classifier_version=result.classifier_version,
+                role=result.role.value,
+                role_confidence=result.role_confidence,
+                employment=result.employment.value,
+                employment_confidence=result.employment_confidence,
+                destination=result.destination.value,
+                classification_source=result.source.value,
+                input_quality=result.input_quality.value,
+                rule=result.rule,
+                evidence=result.evidence,
+            )
+        except Exception:  # noqa: BLE001 - corpus capture must not break the pipeline
+            log.exception("Could not record corpus entry for %s", link.canonical_url)
 
     def _record_decision(self, url: str, job, sent: bool) -> None:
         """Remember where this link went, so the health endpoint can answer for it."""

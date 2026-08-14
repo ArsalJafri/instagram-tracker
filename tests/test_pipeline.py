@@ -215,3 +215,64 @@ def test_poller_backoff_is_capped(build):
     for _ in range(10):
         poller.tick()
     assert poller._next_delay() == 60 * 8
+
+
+# -- corpus capture ------------------------------------------------------
+
+
+def test_every_processed_link_is_stored_for_training(build):
+    pipeline, db, _, _ = build([story("1", [RELEVANT_URL])], process_existing=True)
+
+    pipeline.run_once()
+
+    observations = db.all_observations()
+    assert len(observations) == 1
+    observation = observations[0]
+    assert observation["canonical_url"] == RELEVANT_URL
+    assert observation["story_id"] == "1"
+    assert observation["title"] == "Software Engineer, New Grad"
+    # Raw, not normalized: normalization rules change, and re-normalizing from raw text
+    # is what keeps an old corpus usable against a new classifier.
+    assert observation["raw_text"] == "Software Engineer, New Grad"
+    assert observation["fetch_source"] == "json-ld"
+    assert observation["declared_employment_type"] == "FULL_TIME"
+
+
+def test_the_verdict_is_stored_beside_the_observation(build):
+    pipeline, db, _, _ = build([story("1", [RELEVANT_URL])], process_existing=True)
+
+    pipeline.run_once()
+
+    runs = db.all_classification_runs()
+    assert len(runs) == 1
+    run = runs[0]
+    assert run["observation_id"] == db.all_observations()[0]["id"]
+    assert run["role"] == "software"
+    assert run["employment"] == "full_time"
+    assert run["destination"] == "new_grad"
+    assert run["classifier_version"]
+    assert run["input_quality"] == "rich"
+
+
+def test_a_review_link_is_stored_too(build):
+    # The review channel is the feedback loop, so its postings are the ones most worth
+    # having in the corpus.
+    pipeline, db, _, _ = build([story("1", [BORING_URL])], process_existing=True)
+
+    pipeline.run_once()
+
+    assert db.all_classification_runs()[0]["destination"] == "review"
+    assert len(db.all_observations()) == 1
+
+
+def test_a_corpus_failure_never_costs_a_notification(build, monkeypatch):
+    pipeline, db, _, notifier = build([story("1", [RELEVANT_URL])], process_existing=True)
+
+    def explode(*args, **kwargs):
+        raise RuntimeError("corpus table is unavailable")
+
+    monkeypatch.setattr(db, "record_observation", explode)
+
+    assert pipeline.run_once() == 1
+    assert notifier.sent == [RELEVANT_URL]
+    assert db.all_observations() == []
