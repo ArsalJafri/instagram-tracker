@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+import time
 
 import requests
 
@@ -23,6 +24,17 @@ HEADLINE = {
 UNKNOWN_HEADLINE = "Could not read this posting — check it manually"
 NEAR_MISS_HEADLINE = "Near match — matched one rule but not the other"
 NEAR_MISS_EMBED_COLOR = 0xF1C40F
+# Every send failure observed in production was a 429 — never auth, never network. A
+# 429 is Discord explicitly saying "try again shortly", which made it the most
+# retryable error the notifier could receive and the one it handled worst: one attempt,
+# then the link was discarded permanently.
+MAX_SEND_ATTEMPTS = 3
+
+# Never sleep longer than this inside a poll. A long Retry-After means the limit is not
+# ours to wait out, and blocking the poller to deliver one alert would stop Story
+# detection altogether — the alert is worth less than the tracker.
+MAX_RETRY_WAIT_SECONDS = 5.0
+
 OTHER_HEADLINE = "Other link — did not match the rules"
 OTHER_EMBED_COLOR = 0x95A5A6
 
@@ -83,6 +95,25 @@ def describe_failure(exc: requests.RequestException) -> str:
     return ", ".join(parts)
 
 
+def retry_delay(exc: requests.RequestException) -> float | None:
+    """Seconds to wait before retrying, or None when retrying cannot help.
+
+    Only rate limits and server errors are retried. A 401 or a 404 means the webhook is
+    gone or wrong, and hammering it would turn a configuration mistake into a second
+    rate limit.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    status = response.status_code
+    if status != 429 and status < 500:
+        return None
+    delay = _retry_after_seconds(response)
+    if delay is None:
+        delay = 1.0
+    return delay if delay <= MAX_RETRY_WAIT_SECONDS else None
+
+
 class DiscordNotifier:
     """Posts to Discord, routing internships to their own webhook when one is set.
 
@@ -102,6 +133,7 @@ class DiscordNotifier:
         unknown_webhook_url: str = "",
         timeout: int = 15,
         session: requests.Session | None = None,
+        sleep=time.sleep,
     ) -> None:
         self.webhook_url = webhook_url
         self.internship_webhook_url = internship_webhook_url
@@ -110,6 +142,7 @@ class DiscordNotifier:
         self.internship_mentions = internship_mentions
         self.timeout = timeout
         self.session = session or requests.Session()
+        self.sleep = sleep
 
     def mentions_for(self, job: Job) -> str:
         # Only a confirmed match is worth a ping. Everything else is for reading later.
@@ -153,21 +186,36 @@ class DiscordNotifier:
         if not webhook:
             log.warning("No Discord webhook configured; skipping notification for %s", job.url)
             return False
-        try:
-            response = self.session.post(
-                webhook,
-                json=build_payload(job, username, self.mentions_for(job)),
-                timeout=self.timeout,
-            )
-            response.raise_for_status()
-        except requests.RequestException as exc:
-            log.error(
-                "Discord notification failed for %s (channel %s): %s",
-                job.url,
-                self.channel_name(webhook),
-                describe_failure(exc),
-            )
-            return False
+        channel = self.channel_name(webhook)
+        payload = build_payload(job, username, self.mentions_for(job))
+
+        for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
+            try:
+                response = self.session.post(webhook, json=payload, timeout=self.timeout)
+                response.raise_for_status()
+                break
+            except requests.RequestException as exc:
+                delay = retry_delay(exc)
+                if attempt < MAX_SEND_ATTEMPTS and delay is not None:
+                    log.warning(
+                        "Discord send to %s rejected (%s); retrying in %.2fs "
+                        "[attempt %d of %d] for %s",
+                        channel,
+                        describe_failure(exc),
+                        delay,
+                        attempt,
+                        MAX_SEND_ATTEMPTS,
+                        job.url,
+                    )
+                    self.sleep(delay)
+                    continue
+                log.error(
+                    "Discord notification failed for %s (channel %s): %s",
+                    job.url,
+                    channel,
+                    describe_failure(exc),
+                )
+                return False
         if job.classification is Classification.RELEVANT:
             label = job.role_type.value
         elif job.classification is Classification.UNKNOWN:

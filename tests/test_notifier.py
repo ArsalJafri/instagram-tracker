@@ -113,7 +113,7 @@ class RateLimitedSession:
 
 def test_a_failed_send_never_logs_the_webhook_url(caplog):
     """A webhook URL is a credential; raise_for_status embeds it in the message."""
-    notifier = DiscordNotifier(WEBHOOK, session=RateLimitedSession())
+    notifier = DiscordNotifier(WEBHOOK, session=RateLimitedSession(), sleep=lambda _: None)
 
     with caplog.at_level("WARNING"):
         assert notifier.notify(JOB, "zero2sudo") is False
@@ -125,7 +125,7 @@ def test_a_failed_send_never_logs_the_webhook_url(caplog):
 
 def test_a_rate_limit_is_described_by_status_delay_and_scope(caplog):
     session = RateLimitedSession(RateLimitedResponse(retry_after=0.4, is_global=True))
-    notifier = DiscordNotifier(WEBHOOK, session=session)
+    notifier = DiscordNotifier(WEBHOOK, session=session, sleep=lambda _: None)
 
     with caplog.at_level("ERROR"):
         notifier.notify(JOB, "zero2sudo")
@@ -140,3 +140,68 @@ def test_a_connection_error_is_described_without_a_response():
     from instagram_tracker.notifier import describe_failure
 
     assert describe_failure(requests.ConnectionError("boom")) == "ConnectionError"
+
+
+class FlakySession:
+    """Rate limited for the first `failures` attempts, then accepts the send."""
+
+    def __init__(self, failures: int, response=None):
+        self.calls = []
+        self.failures = failures
+        self.response = response or RateLimitedResponse()
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json))
+        if len(self.calls) <= self.failures:
+            return self.response
+        return FakeResponse()
+
+
+class RejectedResponse:
+    """A webhook that no longer exists — retrying cannot help."""
+
+    status_code = 401
+    headers: dict = {}
+
+    def json(self):
+        return {"message": "401: Unauthorized", "code": 0}
+
+    def raise_for_status(self):
+        raise requests.HTTPError("401 Client Error for url: " + WEBHOOK, response=self)
+
+
+def test_a_rate_limited_send_is_retried_and_succeeds():
+    session = FlakySession(failures=1)
+    slept = []
+    notifier = DiscordNotifier(WEBHOOK, session=session, sleep=slept.append)
+
+    assert notifier.notify(JOB, "zero2sudo") is True
+    assert len(session.calls) == 2
+    assert slept == [0.4]  # Discord's own retry_after, not a guess
+
+
+def test_retries_are_bounded():
+    session = FlakySession(failures=99)
+    notifier = DiscordNotifier(WEBHOOK, session=session, sleep=lambda _: None)
+
+    assert notifier.notify(JOB, "zero2sudo") is False
+    assert len(session.calls) == 3  # MAX_SEND_ATTEMPTS, not forever
+
+
+def test_a_long_retry_after_is_not_waited_out():
+    """A long delay means the limit is not ours; blocking the poller costs more."""
+    session = FlakySession(failures=99, response=RateLimitedResponse(retry_after=90.0))
+    slept = []
+    notifier = DiscordNotifier(WEBHOOK, session=session, sleep=slept.append)
+
+    assert notifier.notify(JOB, "zero2sudo") is False
+    assert len(session.calls) == 1
+    assert slept == []
+
+
+def test_an_unauthorised_webhook_is_not_retried():
+    session = FlakySession(failures=99, response=RejectedResponse())
+    notifier = DiscordNotifier(WEBHOOK, session=session, sleep=lambda _: None)
+
+    assert notifier.notify(JOB, "zero2sudo") is False
+    assert len(session.calls) == 1
