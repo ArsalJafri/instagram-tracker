@@ -53,6 +53,9 @@ class FakeNotifier:
     def enabled(self) -> bool:
         return True
 
+    def webhook_for(self, job) -> str:
+        return "https://discord.test/webhook"
+
     def notify(self, job, username) -> bool:
         self.sent.append(job.url)
         return self.succeed
@@ -306,3 +309,97 @@ def test_a_corpus_failure_is_visible_in_health(build, monkeypatch):
     assert health.snapshot()["corpus"] == {"recorded": 0, "failed": 1}
     # Still notified: the corpus is valuable, the alert is more so.
     assert notifier.sent == [RELEVANT_URL]
+
+
+class RecoveringNotifier(FakeNotifier):
+    """Fails the first `failures` sends, then starts succeeding — a 429 that clears."""
+
+    def __init__(self, failures: int):
+        super().__init__(succeed=False)
+        self.failures = failures
+
+    def notify(self, job, username) -> bool:
+        self.sent.append(job.url)
+        return len(self.sent) > self.failures
+
+
+class UnroutableNotifier(FakeNotifier):
+    """No channel configured for anything — nothing to deliver, nothing to retry."""
+
+    def webhook_for(self, job) -> str:
+        return ""
+
+
+def test_a_failed_send_leaves_the_story_for_the_next_poll(build):
+    """The bug that lost a real internship: one 429 discarded the link permanently."""
+    notifier = RecoveringNotifier(failures=1)
+    pipeline, db, _, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=notifier
+    )
+
+    assert pipeline.run_once() == 0
+    assert db.is_story_processed("1") is False
+    assert db.is_notified(RELEVANT_URL) is False
+
+    # Next poll picks the Story back up and delivery succeeds.
+    assert pipeline.run_once() == 1
+    assert db.is_notified(RELEVANT_URL) is True
+    assert db.is_story_processed("1") is True
+
+    # And it settles: no third send.
+    assert pipeline.run_once() == 0
+    assert notifier.sent == [RELEVANT_URL, RELEVANT_URL]
+
+
+def test_a_retry_does_not_duplicate_the_corpus_observation(build):
+    """job_observations is immutable — one posting, one observation, many runs."""
+    pipeline, db, _, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=RecoveringNotifier(1)
+    )
+
+    pipeline.run_once()
+    pipeline.run_once()
+
+    assert db.is_notified(RELEVANT_URL) is True
+    assert len(db.all_observations()) == 1
+
+
+def test_a_link_with_no_channel_does_not_retry_forever(build):
+    """Nothing was delivered, but nothing can be — so the Story must still settle."""
+    pipeline, db, fetcher, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=UnroutableNotifier()
+    )
+
+    assert pipeline.run_once() == 0
+    assert db.is_story_processed("1") is True
+    assert pipeline.run_once() == 0
+    assert fetcher.fetched == [RELEVANT_URL]
+
+
+def test_a_failed_send_is_reported_as_a_failure_not_as_missing_config(build):
+    """The health endpoint blamed configuration for what were really 429s."""
+    from instagram_tracker.health import HealthState
+
+    health = HealthState()
+    pipeline, _, _, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=FakeNotifier(succeed=False)
+    )
+    pipeline.health = health
+
+    pipeline.run_once()
+
+    assert health.snapshot()["recent"][0]["sent_to"] == "send failed (will retry)"
+
+
+def test_an_unroutable_link_still_reports_missing_config(build):
+    from instagram_tracker.health import HealthState
+
+    health = HealthState()
+    pipeline, _, _, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=UnroutableNotifier()
+    )
+    pipeline.health = health
+
+    pipeline.run_once()
+
+    assert health.snapshot()["recent"][0]["sent_to"] == "none (no channel configured)"

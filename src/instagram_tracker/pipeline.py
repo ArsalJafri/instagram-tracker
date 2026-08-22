@@ -9,6 +9,7 @@ find a populated database and process normally.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 
 from .classification import classify_job, to_job
 from .config import Config
@@ -19,6 +20,22 @@ from .notifier import DiscordNotifier
 from .sources.base import StorySource
 
 log = logging.getLogger(__name__)
+
+
+class LinkOutcome(NamedTuple):
+    """What happened to one link.
+
+    ``complete`` is the important half. A link is complete when it has been delivered,
+    when it was already delivered, or when there is no channel that could ever take it.
+    It is *incomplete* only when a send genuinely failed — and an incomplete link keeps
+    its Story out of ``processed_stories``, so the next poll picks the Story up again
+    and retries delivery. Without that, moving the link record alone would change
+    nothing: Story-level deduplication would skip the whole Story before any link was
+    reconsidered.
+    """
+
+    sent: bool
+    complete: bool
 
 
 class Pipeline:
@@ -73,19 +90,40 @@ class Pipeline:
     def _process_story(self, story: Story) -> int:
         log.info("Processing Story %s (%d links)", story.story_id, len(story.links))
         sent = 0
+        complete = True
         for link in story.links:
-            if self._process_link(story, link):
-                sent += 1
+            outcome = self._process_link(story, link)
+            sent += int(outcome.sent)
+            complete = complete and outcome.complete
+
+        if not complete:
+            # Deliberately left unrecorded so the next poll sees the Story again. Live
+            # Stories expire after 24 hours, which bounds the retrying on its own.
+            log.warning(
+                "Story %s has undelivered links; leaving it unprocessed so they retry",
+                story.story_id,
+            )
+            return sent
+
         self.db.mark_story_processed(
             story.story_id, story.username, story.posted_at, notified=bool(sent)
         )
         return sent
 
-    def _process_link(self, story: Story, link: Link) -> bool:
-        if self.db.is_link_known(link.canonical_url):
-            log.info("Skipping already seen link %s", link.canonical_url)
-            return False
-        self.db.record_link(link.canonical_url, link.original_url, story.story_id)
+    def _process_link(self, story: Story, link: Link) -> LinkOutcome:
+        if self.db.is_notified(link.canonical_url):
+            log.info("Skipping already notified link %s", link.canonical_url)
+            return LinkOutcome(sent=False, complete=True)
+
+        # Known but never delivered means a previous send failed, so this is a retry.
+        # Fetching and classifying again is wasteful but idempotent; recording the
+        # corpus again is not, and the corpus must hold one observation per posting
+        # rather than one per delivery attempt.
+        retrying = self.db.is_link_known(link.canonical_url)
+        if retrying:
+            log.info("Retrying undelivered link %s", link.canonical_url)
+        else:
+            self.db.record_link(link.canonical_url, link.original_url, story.story_id)
 
         details = self.fetcher.fetch(link.canonical_url)
         result = classify_job(
@@ -96,7 +134,8 @@ class Pipeline:
             poor_input_penalty=self.config.poor_input_confidence_penalty,
         )
         job = to_job(result, details, link.canonical_url)
-        self._record_corpus(story, link, details, result)
+        if not retrying:
+            self._record_corpus(story, link, details, result)
         self.db.record_job(
             link.canonical_url,
             job.title,
@@ -117,14 +156,21 @@ class Pipeline:
         # Every link is offered to the notifier. A confirmed match goes to its role
         # channel; everything else goes to the review channel, so a link @zero2sudo
         # posted is never silently dropped.
-        sent = False
-        if not self.db.is_notified(link.canonical_url):
-            sent = self.notifier.notify(job, story.username)
-            if sent:
-                self.db.record_notification(link.canonical_url, story.story_id)
+        if not self.notifier.webhook_for(job):
+            # Nothing was delivered and nothing can be, so this link is finished rather
+            # than pending. Retrying it forever would refetch the posting every minute.
+            self._record_decision(
+                link.canonical_url, job, sent=False, note="none (no channel configured)"
+            )
+            return LinkOutcome(sent=False, complete=True)
 
-        self._record_decision(link.canonical_url, job, sent)
-        return sent
+        sent = self.notifier.notify(job, story.username)
+        if sent:
+            self.db.record_notification(link.canonical_url, story.story_id)
+        self._record_decision(
+            link.canonical_url, job, sent=sent, note="send failed (will retry)"
+        )
+        return LinkOutcome(sent=sent, complete=sent)
 
     def _record_corpus(self, story: Story, link: Link, details, result) -> None:
         """Persist the posting and the verdict for later labelling and retraining.
@@ -165,12 +211,17 @@ class Pipeline:
         if self.health:
             self.health.record_corpus(ok=True)
 
-    def _record_decision(self, url: str, job, sent: bool) -> None:
-        """Remember where this link went, so the health endpoint can answer for it."""
+    def _record_decision(self, url: str, job, sent: bool, note: str) -> None:
+        """Remember where this link went, so the health endpoint can answer for it.
+
+        ``note`` says why nothing was sent. It used to be hardcoded to "no channel
+        configured", which reported a delivery failure as a configuration mistake and
+        sent an investigation looking in the wrong place for three days.
+        """
         if not self.health:
             return
         if not sent:
-            destination = "none (no channel configured)"
+            destination = note
         elif job.classification is Classification.RELEVANT:
             destination = job.role_type.value
         else:
