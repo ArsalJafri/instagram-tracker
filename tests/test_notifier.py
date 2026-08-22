@@ -72,3 +72,71 @@ def test_notify_reports_failure_without_raising():
     session = FakeSession(exc=requests.ConnectionError("boom"))
     notifier = DiscordNotifier("https://discord.test/webhook", session=session)
     assert notifier.notify(JOB, "zero2sudo") is False
+
+
+WEBHOOK = "https://discord.com/api/webhooks/1536886605732904991/LotWezffhas1o3Fs-t92lhPPWcjbeznth"
+SECRET = "LotWezffhas1o3Fs-t92lhPPWcjbeznth"
+
+
+class RateLimitedResponse:
+    """Discord's real 429 shape: a JSON body with retry_after and a global flag."""
+
+    status_code = 429
+    headers = {"Retry-After": "1"}
+
+    def __init__(self, retry_after: float = 0.4, is_global: bool = False):
+        self._body = {
+            "message": "You are being rate limited.",
+            "retry_after": retry_after,
+            "global": is_global,
+        }
+
+    def json(self):
+        return self._body
+
+    def raise_for_status(self):
+        # requests puts the full request URL — webhook token and all — in this message.
+        raise requests.HTTPError(
+            f"429 Client Error: Too Many Requests for url: {WEBHOOK}", response=self
+        )
+
+
+class RateLimitedSession:
+    def __init__(self, response=None):
+        self.calls = []
+        self.response = response or RateLimitedResponse()
+
+    def post(self, url, json=None, timeout=None):
+        self.calls.append((url, json))
+        return self.response
+
+
+def test_a_failed_send_never_logs_the_webhook_url(caplog):
+    """A webhook URL is a credential; raise_for_status embeds it in the message."""
+    notifier = DiscordNotifier(WEBHOOK, session=RateLimitedSession())
+
+    with caplog.at_level("WARNING"):
+        assert notifier.notify(JOB, "zero2sudo") is False
+
+    assert SECRET not in caplog.text
+    assert WEBHOOK not in caplog.text
+    assert "new_grad" in caplog.text
+
+
+def test_a_rate_limit_is_described_by_status_delay_and_scope(caplog):
+    session = RateLimitedSession(RateLimitedResponse(retry_after=0.4, is_global=True))
+    notifier = DiscordNotifier(WEBHOOK, session=session)
+
+    with caplog.at_level("ERROR"):
+        notifier.notify(JOB, "zero2sudo")
+
+    assert "HTTP 429" in caplog.text
+    assert "retry_after=0.4s" in caplog.text
+    # The one flag that separates our own burst from a shared-IP limit.
+    assert "global=True" in caplog.text
+
+
+def test_a_connection_error_is_described_without_a_response():
+    from instagram_tracker.notifier import describe_failure
+
+    assert describe_failure(requests.ConnectionError("boom")) == "ConnectionError"

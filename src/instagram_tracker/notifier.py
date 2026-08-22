@@ -27,6 +27,62 @@ OTHER_HEADLINE = "Other link — did not match the rules"
 OTHER_EMBED_COLOR = 0x95A5A6
 
 
+def _retry_after_seconds(response: requests.Response) -> float | None:
+    """How long Discord asked us to wait, in seconds.
+
+    Discord answers a 429 with a JSON body carrying `retry_after` as a float, which is
+    more precise than the `Retry-After` header it also sends. Neither contains anything
+    secret, unlike the request URL.
+    """
+    payload = _json_body(response)
+    if isinstance(payload, dict) and isinstance(payload.get("retry_after"), (int, float)):
+        return float(payload["retry_after"])
+    header = response.headers.get("Retry-After")
+    if not header:
+        return None
+    try:
+        return float(header)
+    except ValueError:
+        return None
+
+
+def _json_body(response: requests.Response):
+    try:
+        return response.json()
+    except ValueError:
+        return None
+
+
+def describe_failure(exc: requests.RequestException) -> str:
+    """Explain a send failure without ever naming the webhook.
+
+    A webhook URL is a credential — anyone holding it can post to the channel — and
+    `raise_for_status()` embeds the full request URL in its message. Logging the
+    exception object therefore wrote three live credentials into the host's log store on
+    every failure, which is how they were found.
+
+    What is worth logging is what the exception does *not* say plainly: the status, how
+    long Discord wants us to wait, and whether the limit is `global`. That last flag is
+    the only thing that separates "we are sending too fast" from "this egress IP is rate
+    limited by someone else's traffic", and it was the question the old log could not
+    answer.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return type(exc).__name__
+
+    parts = [f"HTTP {response.status_code}"]
+    if (delay := _retry_after_seconds(response)) is not None:
+        parts.append(f"retry_after={delay}s")
+    payload = _json_body(response)
+    if isinstance(payload, dict):
+        if "global" in payload:
+            parts.append(f"global={payload['global']}")
+        if message := payload.get("message"):
+            parts.append(str(message)[:120])
+    return ", ".join(parts)
+
+
 class DiscordNotifier:
     """Posts to Discord, routing internships to their own webhook when one is set.
 
@@ -81,6 +137,17 @@ class DiscordNotifier:
             return self.internship_webhook_url
         return self.webhook_url or self.internship_webhook_url
 
+    def channel_name(self, webhook: str) -> str:
+        """Name a channel for logging, so a URL never reaches a log line."""
+        for name, url in (
+            ("new_grad", self.webhook_url),
+            ("internship", self.internship_webhook_url),
+            ("review", self.unknown_webhook_url),
+        ):
+            if url and webhook == url:
+                return name
+        return "unrecognised channel"
+
     def notify(self, job: Job, username: str) -> bool:
         webhook = self.webhook_for(job)
         if not webhook:
@@ -94,7 +161,12 @@ class DiscordNotifier:
             )
             response.raise_for_status()
         except requests.RequestException as exc:
-            log.error("Discord notification failed for %s: %s", job.url, exc)
+            log.error(
+                "Discord notification failed for %s (channel %s): %s",
+                job.url,
+                self.channel_name(webhook),
+                describe_failure(exc),
+            )
             return False
         if job.classification is Classification.RELEVANT:
             label = job.role_type.value
