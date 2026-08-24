@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import re
 import time
+from dataclasses import dataclass
 
 import requests
 
@@ -37,6 +38,24 @@ MAX_RETRY_WAIT_SECONDS = 5.0
 
 OTHER_HEADLINE = "Other link — did not match the rules"
 OTHER_EMBED_COLOR = 0x95A5A6
+
+
+@dataclass(frozen=True)
+class SendResult:
+    """Whether the alert went out, and when it would be worth trying again.
+
+    ``retry_after`` carries Discord's own deadline out to the caller. Honouring it only
+    inside a single send was not enough: the poller simply came back a minute later and
+    sent again, so a webhook that had asked for a 53-minute pause was polled roughly
+    fifty times during it. The delay has to survive the call that discovered it.
+    """
+
+    sent: bool
+    retry_after: float | None = None
+
+    def __bool__(self) -> bool:
+        # So an accidental `if notifier.notify(...)` still means "did it send".
+        return self.sent
 
 
 def _retry_after_seconds(response: requests.Response) -> float | None:
@@ -114,6 +133,23 @@ def retry_delay(exc: requests.RequestException) -> float | None:
     return delay if delay <= MAX_RETRY_WAIT_SECONDS else None
 
 
+def _pause_requested(exc: requests.RequestException) -> float | None:
+    """The full delay Discord asked for, uncapped.
+
+    ``retry_delay`` deliberately refuses anything over MAX_RETRY_WAIT_SECONDS, because
+    sleeping that long inside a poll would stall Story detection. That cap is right for
+    *waiting* and wrong for *forgetting*: the pause still has to be observed, just by
+    not calling again rather than by blocking. This returns the real figure so the
+    caller can schedule around it.
+    """
+    response = getattr(exc, "response", None)
+    if response is None:
+        return None
+    if response.status_code != 429 and response.status_code < 500:
+        return None
+    return _retry_after_seconds(response)
+
+
 class DiscordNotifier:
     """Posts to Discord, routing internships to their own webhook when one is set.
 
@@ -181,11 +217,11 @@ class DiscordNotifier:
                 return name
         return "unrecognised channel"
 
-    def notify(self, job: Job, username: str) -> bool:
+    def notify(self, job: Job, username: str) -> SendResult:
         webhook = self.webhook_for(job)
         if not webhook:
             log.warning("No Discord webhook configured; skipping notification for %s", job.url)
-            return False
+            return SendResult(sent=False)
         channel = self.channel_name(webhook)
         payload = build_payload(job, username, self.mentions_for(job))
 
@@ -215,7 +251,7 @@ class DiscordNotifier:
                     channel,
                     describe_failure(exc),
                 )
-                return False
+                return SendResult(sent=False, retry_after=_pause_requested(exc))
         if job.classification is Classification.RELEVANT:
             label = job.role_type.value
         elif job.classification is Classification.UNKNOWN:
@@ -223,7 +259,7 @@ class DiscordNotifier:
         else:
             label = "near-miss" if job.near_miss else "other"
         log.info("Notified Discord (%s) about %s", label, job.url)
-        return True
+        return SendResult(sent=True)
 
 
 _VALID_MENTION = re.compile(r"<@[!&]?\d+>")

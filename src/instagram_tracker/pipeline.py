@@ -9,6 +9,7 @@ find a populated database and process normally.
 from __future__ import annotations
 
 import logging
+import time
 from typing import NamedTuple
 
 from .classification import classify_job, to_job
@@ -54,6 +55,11 @@ class Pipeline:
         self.fetcher = fetcher
         self.notifier = notifier
         self.health = health
+        # canonical_url -> monotonic deadline before which retrying is pointless, set
+        # from Discord's own Retry-After. Held in memory rather than in the database:
+        # losing it on restart costs one extra attempt, which is cheaper than a schema
+        # change and self-corrects immediately.
+        self._deferred: dict[str, float] = {}
 
     def run_once(self) -> int:
         """Poll once. Returns the number of notifications sent."""
@@ -115,6 +121,20 @@ class Pipeline:
             log.info("Skipping already notified link %s", link.canonical_url)
             return LinkOutcome(sent=False, complete=True)
 
+        # Discord asked us to wait, so wait. This check sits above the fetch on purpose:
+        # a rate limit is a reason to touch nothing at all, and retrying every minute
+        # was re-reading the employer's careers page as often as it was re-sending.
+        if (deadline := self._deferred.get(link.canonical_url)) is not None:
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                log.info(
+                    "Holding %s for another %.0fs at Discord's request",
+                    link.canonical_url,
+                    remaining,
+                )
+                return LinkOutcome(sent=False, complete=False)
+            del self._deferred[link.canonical_url]
+
         # Known but never delivered means a previous send failed, so this is a retry.
         # Fetching and classifying again is wasteful but idempotent; recording the
         # corpus again is not, and the corpus must hold one observation per posting
@@ -164,13 +184,19 @@ class Pipeline:
             )
             return LinkOutcome(sent=False, complete=True)
 
-        sent = self.notifier.notify(job, story.username)
-        if sent:
+        result = self.notifier.notify(job, story.username)
+        if result.sent:
             self.db.record_notification(link.canonical_url, story.story_id)
-        self._record_decision(
-            link.canonical_url, job, sent=sent, note="send failed (will retry)"
-        )
-        return LinkOutcome(sent=sent, complete=sent)
+            self._deferred.pop(link.canonical_url, None)
+            note = ""
+        elif result.retry_after:
+            self._deferred[link.canonical_url] = time.monotonic() + result.retry_after
+            note = f"rate limited (retrying in {result.retry_after:.0f}s)"
+        else:
+            note = "send failed (will retry)"
+
+        self._record_decision(link.canonical_url, job, sent=result.sent, note=note)
+        return LinkOutcome(sent=result.sent, complete=result.sent)
 
     def _record_corpus(self, story: Story, link: Link, details, result) -> None:
         """Persist the posting and the verdict for later labelling and retraining.

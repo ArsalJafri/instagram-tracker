@@ -58,20 +58,20 @@ def test_notify_posts_to_the_webhook():
     session = FakeSession()
     notifier = DiscordNotifier("https://discord.test/webhook", session=session)
 
-    assert notifier.notify(JOB, "zero2sudo") is True
+    assert notifier.notify(JOB, "zero2sudo").sent is True
     assert session.calls[0][0] == "https://discord.test/webhook"
 
 
 def test_notify_without_a_webhook_is_a_no_op():
     session = FakeSession()
-    assert DiscordNotifier("", session=session).notify(JOB, "zero2sudo") is False
+    assert DiscordNotifier("", session=session).notify(JOB, "zero2sudo").sent is False
     assert session.calls == []
 
 
 def test_notify_reports_failure_without_raising():
     session = FakeSession(exc=requests.ConnectionError("boom"))
     notifier = DiscordNotifier("https://discord.test/webhook", session=session)
-    assert notifier.notify(JOB, "zero2sudo") is False
+    assert notifier.notify(JOB, "zero2sudo").sent is False
 
 
 WEBHOOK = "https://discord.com/api/webhooks/1536886605732904991/LotWezffhas1o3Fs-t92lhPPWcjbeznth"
@@ -116,7 +116,7 @@ def test_a_failed_send_never_logs_the_webhook_url(caplog):
     notifier = DiscordNotifier(WEBHOOK, session=RateLimitedSession(), sleep=lambda _: None)
 
     with caplog.at_level("WARNING"):
-        assert notifier.notify(JOB, "zero2sudo") is False
+        assert notifier.notify(JOB, "zero2sudo").sent is False
 
     assert SECRET not in caplog.text
     assert WEBHOOK not in caplog.text
@@ -175,7 +175,7 @@ def test_a_rate_limited_send_is_retried_and_succeeds():
     slept = []
     notifier = DiscordNotifier(WEBHOOK, session=session, sleep=slept.append)
 
-    assert notifier.notify(JOB, "zero2sudo") is True
+    assert notifier.notify(JOB, "zero2sudo").sent is True
     assert len(session.calls) == 2
     assert slept == [0.4]  # Discord's own retry_after, not a guess
 
@@ -184,7 +184,7 @@ def test_retries_are_bounded():
     session = FlakySession(failures=99)
     notifier = DiscordNotifier(WEBHOOK, session=session, sleep=lambda _: None)
 
-    assert notifier.notify(JOB, "zero2sudo") is False
+    assert notifier.notify(JOB, "zero2sudo").sent is False
     assert len(session.calls) == 3  # MAX_SEND_ATTEMPTS, not forever
 
 
@@ -194,7 +194,7 @@ def test_a_long_retry_after_is_not_waited_out():
     slept = []
     notifier = DiscordNotifier(WEBHOOK, session=session, sleep=slept.append)
 
-    assert notifier.notify(JOB, "zero2sudo") is False
+    assert notifier.notify(JOB, "zero2sudo").sent is False
     assert len(session.calls) == 1
     assert slept == []
 
@@ -203,5 +203,5 @@ def test_an_unauthorised_webhook_is_not_retried():
     session = FlakySession(failures=99, response=RejectedResponse())
     notifier = DiscordNotifier(WEBHOOK, session=session, sleep=lambda _: None)
 
-    assert notifier.notify(JOB, "zero2sudo") is False
+    assert notifier.notify(JOB, "zero2sudo").sent is False
     assert len(session.calls) == 1

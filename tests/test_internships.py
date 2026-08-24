@@ -166,7 +166,7 @@ def test_internships_fall_back_to_the_main_webhook_when_unconfigured():
     session = FakeSession()
     notifier = DiscordNotifier("https://main.test", "", session=session)
 
-    assert notifier.notify(job(RoleType.INTERNSHIP), "zero2sudo") is True
+    assert notifier.notify(job(RoleType.INTERNSHIP), "zero2sudo").sent is True
     assert session.calls[0][0] == "https://main.test"
 
 
@@ -174,7 +174,7 @@ def test_only_an_internship_webhook_still_notifies():
     session = FakeSession()
     notifier = DiscordNotifier("", "https://intern.test", session=session)
 
-    assert notifier.notify(job(RoleType.INTERNSHIP), "zero2sudo") is True
+    assert notifier.notify(job(RoleType.INTERNSHIP), "zero2sudo").sent is True
     assert session.calls[0][0] == "https://intern.test"
 
 

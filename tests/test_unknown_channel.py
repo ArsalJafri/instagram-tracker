@@ -61,14 +61,14 @@ def notifier(session, unknown="https://review.test"):
 
 def test_an_unreadable_posting_goes_to_the_review_channel():
     session = FakeSession()
-    assert notifier(session).notify(unreadable(), "zero2sudo") is True
+    assert notifier(session).notify(unreadable(), "zero2sudo").sent is True
     assert session.calls[0][0] == "https://review.test"
 
 
 def test_it_never_falls_back_to_a_real_channel():
     # The point of a separate channel is that unreadable links do not mix with matches.
     session = FakeSession()
-    assert notifier(session, unknown="").notify(unreadable(), "zero2sudo") is False
+    assert notifier(session, unknown="").notify(unreadable(), "zero2sudo").sent is False
     assert session.calls == []
 
 
@@ -125,7 +125,7 @@ def near_miss_job():
 
 def test_a_near_miss_goes_to_the_review_channel():
     session = FakeSession()
-    assert notifier(session).notify(near_miss_job(), "zero2sudo") is True
+    assert notifier(session).notify(near_miss_job(), "zero2sudo").sent is True
     assert session.calls[0][0] == "https://review.test"
 
 
@@ -147,7 +147,7 @@ def test_a_near_miss_never_pings_anyone():
 
 def test_near_misses_stay_silent_without_a_review_channel():
     session = FakeSession()
-    assert notifier(session, unknown="").notify(near_miss_job(), "zero2sudo") is False
+    assert notifier(session, unknown="").notify(near_miss_job(), "zero2sudo").sent is False
     assert session.calls == []
 
 
@@ -170,7 +170,7 @@ def test_a_plain_rejection_also_reaches_the_review_channel():
     # Nothing @zero2sudo links should vanish. Judging which rejections were worth
     # showing guessed wrong repeatedly, and the misses were invisible by construction.
     session = FakeSession()
-    assert notifier(session).notify(plain_reject(), "zero2sudo") is True
+    assert notifier(session).notify(plain_reject(), "zero2sudo").sent is True
     assert session.calls[0][0] == "https://review.test"
 
 

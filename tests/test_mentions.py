@@ -125,7 +125,7 @@ def test_an_unconfigured_notifier_still_sends_silently():
     session = FakeSession()
     notifier = DiscordNotifier("https://main.test", session=session)
 
-    assert notifier.notify(job(), "zero2sudo") is True
+    assert notifier.notify(job(), "zero2sudo").sent is True
     assert session.calls[0][1]["allowed_mentions"] == {"parse": []}
 
 

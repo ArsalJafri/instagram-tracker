@@ -10,6 +10,7 @@ from instagram_tracker.config import Config
 from instagram_tracker.db import Database
 from instagram_tracker.jobs import JobDetails
 from instagram_tracker.models import Link, Story
+from instagram_tracker.notifier import SendResult
 from instagram_tracker.pipeline import Pipeline
 from instagram_tracker.poller import Poller
 from instagram_tracker.sources.base import StorySource, StorySourceError
@@ -45,9 +46,10 @@ class FakeFetcher:
 
 
 class FakeNotifier:
-    def __init__(self, succeed: bool = True):
+    def __init__(self, succeed: bool = True, retry_after: float | None = None):
         self.sent = []
         self.succeed = succeed
+        self.retry_after = retry_after
 
     @property
     def enabled(self) -> bool:
@@ -56,9 +58,9 @@ class FakeNotifier:
     def webhook_for(self, job) -> str:
         return "https://discord.test/webhook"
 
-    def notify(self, job, username) -> bool:
+    def notify(self, job, username) -> SendResult:
         self.sent.append(job.url)
-        return self.succeed
+        return SendResult(sent=self.succeed, retry_after=self.retry_after)
 
 
 def story(story_id: str, urls: list[str] = ()) -> Story:
@@ -318,9 +320,9 @@ class RecoveringNotifier(FakeNotifier):
         super().__init__(succeed=False)
         self.failures = failures
 
-    def notify(self, job, username) -> bool:
+    def notify(self, job, username) -> SendResult:
         self.sent.append(job.url)
-        return len(self.sent) > self.failures
+        return SendResult(sent=len(self.sent) > self.failures)
 
 
 class UnroutableNotifier(FakeNotifier):
@@ -403,3 +405,58 @@ def test_an_unroutable_link_still_reports_missing_config(build):
     pipeline.run_once()
 
     assert health.snapshot()["recent"][0]["sent_to"] == "none (no channel configured)"
+
+
+def test_a_long_rate_limit_stops_us_touching_the_network_at_all(build):
+    """The 2026-08-24 incident: Discord said wait 53 minutes, we retried every 60s.
+
+    Honouring Retry-After only inside a send was not enough — the poller came straight
+    back and sent again, so the pause was observed roughly fifty times per ban window,
+    re-reading the employer's careers page each time.
+    """
+    notifier = FakeNotifier(succeed=False, retry_after=1800.0)
+    pipeline, _, fetcher, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=notifier
+    )
+
+    assert pipeline.run_once() == 0
+    assert fetcher.fetched == [RELEVANT_URL]
+    assert notifier.sent == [RELEVANT_URL]
+
+    # Every later poll must be a no-op: no send, and no refetch either.
+    for _ in range(5):
+        assert pipeline.run_once() == 0
+    assert fetcher.fetched == [RELEVANT_URL]
+    assert notifier.sent == [RELEVANT_URL]
+
+
+def test_delivery_resumes_once_the_rate_limit_expires(build):
+    notifier = FakeNotifier(succeed=False, retry_after=1800.0)
+    pipeline, db, _, _ = build(
+        [story("1", [RELEVANT_URL])], process_existing=True, notifier=notifier
+    )
+    pipeline.run_once()
+
+    # Discord's window passes, and the link is no longer held back.
+    pipeline._deferred[RELEVANT_URL] = 0.0
+    pipeline.notifier = FakeNotifier(succeed=True)
+
+    assert pipeline.run_once() == 1
+    assert db.is_notified(RELEVANT_URL) is True
+    assert db.is_story_processed("1") is True
+
+
+def test_a_rate_limited_link_says_so_on_the_health_endpoint(build):
+    from instagram_tracker.health import HealthState
+
+    health = HealthState()
+    pipeline, _, _, _ = build(
+        [story("1", [RELEVANT_URL])],
+        process_existing=True,
+        notifier=FakeNotifier(succeed=False, retry_after=1800.0),
+    )
+    pipeline.health = health
+
+    pipeline.run_once()
+
+    assert health.snapshot()["recent"][0]["sent_to"] == "rate limited (retrying in 1800s)"
