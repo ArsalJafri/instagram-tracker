@@ -180,6 +180,69 @@ def test_a_structured_employment_type_short_circuits_the_scorer():
     assert result.destination is Destination.INTERNSHIP
 
 
+@pytest.mark.parametrize(
+    "title",
+    [
+        # Both observed in the new-grad channel on 2026-08-25, from employers whose
+        # JSON-LD declares FULL_TIME. The second has no space before the hyphen, which
+        # is why normalisation is part of what this covers.
+        "AI Software Engineering Intern - Edge",
+        "Single-Family Software Developer Intern- Summer 2027",
+        "Software Engineer Co-op",
+    ],
+)
+def test_an_intern_title_beats_a_full_time_declaration(title):
+    """A summer internship is full-time hours, so ATSs declare FULL_TIME truthfully.
+
+    Believing the field over the title sent every such internship to the new-grad
+    channel for eleven days without failing a test.
+    """
+    result = classify_job(details(title, employment_type="FULL_TIME"), "https://x/1")
+
+    assert result.employment is EmploymentClass.INTERN
+    assert result.destination is Destination.INTERNSHIP
+    assert result.source is ClassificationSource.SCORER
+    assert result.rule is None
+    assert "veto:intern-title-over-full-time" in result.evidence
+
+
+def test_a_declared_intern_is_still_trusted_outright():
+    """The veto is aimed at FULL_TIME only; an explicit INTERN keeps short-circuiting."""
+    result = classify_job(
+        details("Software Engineer Intern", employment_type="INTERN"), "https://x/1"
+    )
+
+    assert result.source is ClassificationSource.RULE
+    assert result.rule == "structured-employment-intern"
+    assert result.destination is Destination.INTERNSHIP
+
+
+def test_a_full_time_declaration_still_wins_without_an_intern_title():
+    """Nothing changes for the case the rule was written for."""
+    result = classify_job(
+        details("Software Engineer", employment_type="FULL_TIME"), "https://x/1"
+    )
+
+    assert result.employment is EmploymentClass.FULL_TIME
+    assert result.source is ClassificationSource.RULE
+    assert result.rule == "structured-employment-full-time"
+
+
+def test_a_description_only_intern_signal_does_not_veto():
+    """Corroboration in the body is not the employer naming the role in the title."""
+    result = classify_job(
+        details(
+            "Software Engineer",
+            text="You must be currently enrolled in an undergraduate programme.",
+            employment_type="FULL_TIME",
+        ),
+        "https://x/1",
+    )
+
+    assert result.source is ClassificationSource.RULE
+    assert result.rule == "structured-employment-full-time"
+
+
 def test_schema_org_underscore_spellings_are_understood():
     result = classify_job(
         details("Software Engineer", employment_type="PART_TIME"), "https://x/1"

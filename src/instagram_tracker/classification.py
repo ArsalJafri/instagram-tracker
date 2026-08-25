@@ -35,7 +35,7 @@ from .models import (
 
 # Bump whenever vocabulary, weights or thresholds change. Stored on every run so a later
 # version can be replayed over the same observations and compared.
-CLASSIFIER_VERSION = "scorer-2026-08-14"
+CLASSIFIER_VERSION = "scorer-2026-08-25"
 
 # Weight at which a label is considered fully evidenced. Reaching it with one strong
 # signal or several weak ones is deliberately equivalent.
@@ -220,6 +220,20 @@ def _fires(signal: Signal, title: str, body: str) -> bool:
     return all(any(_entry_matches(haystack, e) for e in group) for group in signal.groups)
 
 
+def _title_intern_weight(title: str) -> float:
+    """Weight of the intern signals that read the title alone.
+
+    Only the title-only signals count. A description mentioning "currently enrolled" is
+    corroboration; a title saying "Intern" is the employer naming the role, and only the
+    second is strong enough to contradict a structured field.
+    """
+    return sum(
+        signal.weight
+        for signal in EMPLOYMENT_SIGNALS[EmploymentClass.INTERN]
+        if signal.title_only and _fires(signal, title, "")
+    )
+
+
 def _score(signals: dict, title: str, body: str) -> tuple[dict, list[str]]:
     """Total the weight of every signal that fires, per label."""
     totals = {label: 0.0 for label in signals}
@@ -325,10 +339,25 @@ def classify_job(
     source = ClassificationSource.SCORER
     rule = None
     if (fired := _employment_rule(details.employment_type or "", body)) is not None:
-        employment, rule = fired
-        employment_confidence = 0.95
-        source = ClassificationSource.RULE
-        employment_evidence.insert(0, f"rule:{rule}")
+        # schema.org's `employmentType` answers "how many hours", not "is this a
+        # permanent role", and the two only look like one question. A summer internship
+        # is genuinely full-time, so Workday and similar emit FULL_TIME for interns
+        # truthfully; `INTERN` exists in the vocabulary but most systems never send it.
+        # Taken at face value the field routed "Software Engineering Intern" to the
+        # new-grad channel, evidence and all, from 2026-08-14 until this was found.
+        #
+        # So a saturated intern title vetoes a FULL_TIME declaration, exactly as a
+        # contract signal vetoes below. A declared INTERN is still trusted outright:
+        # only the FULL_TIME reading is ambiguous, and an employer that bothers to say
+        # INTERN is not the one getting this wrong.
+        declared_full_time = fired[0] is EmploymentClass.FULL_TIME
+        if declared_full_time and _title_intern_weight(title) >= SATURATION:
+            employment_evidence.insert(0, "veto:intern-title-over-full-time")
+        else:
+            employment, rule = fired
+            employment_confidence = 0.95
+            source = ClassificationSource.RULE
+            employment_evidence.insert(0, f"rule:{rule}")
 
     # A contract or part-time signal in the title vetoes rather than competes. Left to
     # scoring, "New Grad Software Engineer (Contract)" is won by the new-grad signal and
