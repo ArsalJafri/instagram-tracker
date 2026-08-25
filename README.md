@@ -23,7 +23,7 @@ Poller -> StorySource -> story processing -> link extraction -> URL normalizatio
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
-cp .env.example .env   # then fill in DISCORD_WEBHOOK_URL
+cp .env.example .env   # then fill in DISCORD_NEW_GRAD_WEBHOOK_URL
 ```
 
 ## Run
@@ -50,13 +50,25 @@ python -m instagram_tracker --once
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
 | `DATABASE_URL` | — | Postgres URL; overrides `DATABASE_PATH` when set |
 | `PORT` | — | Set by the host; when present a health endpoint is served on it |
-| `DISCORD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
+| `DISCORD_NEW_GRAD_WEBHOOK_URL` | — | Discord webhook for entry-level/new-grad roles |
 | `DISCORD_INTERNSHIP_WEBHOOK_URL` | — | Separate webhook for internships; falls back to the main one |
 | `RENDER_PROXY_URL` | `https://r.jina.ai/{url}` | Last-resort renderer for pages that block plain fetches |
-| `DISCORD_UNKNOWN_WEBHOOK_URL` | — | Review channel for postings that could not be read |
-| `DISCORD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
+| `DISCORD_REVIEW_WEBHOOK_URL` | — | Review channel: near misses, plain rejections, and postings that could not be read |
+| `DISCORD_NEW_GRAD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
 | `DISCORD_INTERNSHIP_MENTIONS` | — | Same for internship alerts; independent of the above |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
+
+### Renamed settings
+
+Three settings were renamed on 2026-08-24. The old names still work, take effect only
+when the new name is unset, and warn at startup — so an environment can be migrated
+without downtime. They will be removed once no deployment relies on them.
+
+| Old | New | Why |
+| --- | --- | --- |
+| `DISCORD_WEBHOOK_URL` | `DISCORD_NEW_GRAD_WEBHOOK_URL` | Read as a generic default, but only ever meant the new-grad channel |
+| `DISCORD_MENTIONS` | `DISCORD_NEW_GRAD_MENTIONS` | Same, and asymmetric with its `INTERNSHIP` counterpart |
+| `DISCORD_UNKNOWN_WEBHOOK_URL` | `DISCORD_REVIEW_WEBHOOK_URL` | Named when the channel only took unreadable pages; it has taken near misses and plain rejections since routing became exhaustive |
 
 ## What counts as relevant
 
@@ -66,7 +78,7 @@ internship. Each relevant job is tagged with a `role_type` that decides where it
 | Role type | Signals (title or `employmentType` only) | Channel |
 | --- | --- | --- |
 | `internship` | `intern`, `internship`, `co-op`, `coop` | `DISCORD_INTERNSHIP_WEBHOOK_URL` |
-| `new_grad` | `new grad`, `entry level`, `early career`, `associate`, `engineer i/ii`, … | `DISCORD_WEBHOOK_URL` |
+| `new_grad` | `new grad`, `entry level`, `early career`, `associate`, `engineer i/ii`, … | `DISCORD_NEW_GRAD_WEBHOOK_URL` |
 
 Internship signals are read from the title and `employmentType` only, never the
 description — postings routinely mention unrelated internship programmes, which would
@@ -134,7 +146,7 @@ an alert that never arrived if you happen to be watching Instagram yourself.
 
 | Outcome | Channel | Headline |
 | --- | --- | --- |
-| relevant, new grad | `DISCORD_WEBHOOK_URL` | New entry-level software role |
+| relevant, new grad | `DISCORD_NEW_GRAD_WEBHOOK_URL` | New entry-level software role |
 | relevant, internship | `DISCORD_INTERNSHIP_WEBHOOK_URL` | New software internship |
 | near miss | review | Near match — matched one rule but not the other |
 | unreadable | review | Could not read this posting — check it manually |
@@ -155,7 +167,7 @@ A seniority word settles the question only when nothing else claims the role is 
 surfaces. Newsletters and events match neither rule and never appear.
 
 **And `unknown` postings are sent to a review channel** via
-`DISCORD_UNKNOWN_WEBHOOK_URL`, in amber and headed "Could not read this posting", with a
+`DISCORD_REVIEW_WEBHOOK_URL`, in amber and headed "Could not read this posting", with a
 field explaining why. Some sites cannot be read at all — `careers.ibm.com` answers a
 plain fetch with HTTP 202 and an empty body, which is bot detection rather than
 client-side rendering, and no amount of parsing recovers the role. Dropping those links
@@ -173,11 +185,11 @@ internship alert.
 
 ## Mentioning people
 
-`DISCORD_MENTIONS` and `DISCORD_INTERNSHIP_MENTIONS` hold raw Discord mention text,
+`DISCORD_NEW_GRAD_MENTIONS` and `DISCORD_INTERNSHIP_MENTIONS` hold raw Discord mention text,
 prepended to the alert so it actually notifies someone:
 
 ```bash
-DISCORD_MENTIONS=<@&987654321>          # a role
+DISCORD_NEW_GRAD_MENTIONS=<@&987654321>          # a role
 DISCORD_INTERNSHIP_MENTIONS=<@&111222333>
 ```
 
@@ -194,7 +206,7 @@ sends, looks right, and notifies no one.
 The app therefore checks at startup and says so:
 
 ```text
-WARNING  DISCORD_MENTIONS contains bare id(s) 1536859615256645732 — Discord renders
+WARNING  DISCORD_NEW_GRAD_MENTIONS contains bare id(s) 1536859615256645732 — Discord renders
          these as plain text and pings nobody. Wrap them: <@&ID> for a role,
          <@ID> for a user.
 ```
@@ -371,7 +383,7 @@ Steps:
    Project, which only offers service types), and `render.yaml` describes everything.
    Creating a **Web Service** by hand works identically — leave **Root Directory**
    blank, since the repository root is the project root.
-3. Set `DATABASE_URL`, `DISCORD_WEBHOOK_URL` and `DISCORD_INTERNSHIP_WEBHOOK_URL` in the
+3. Set `DATABASE_URL`, `DISCORD_NEW_GRAD_WEBHOOK_URL` and `DISCORD_INTERNSHIP_WEBHOOK_URL` in the
    dashboard. They are marked `sync: false` so they never live in the repo. Leave
    `HEARTBEAT_URL` unset — step 4 covers it.
 4. Point **UptimeRobot** (free, 50 monitors) at the service URL on a **5-minute**
@@ -440,7 +452,7 @@ assumptions and works on any Debian-family machine, including a Raspberry Pi.
 ```bash
 git clone git@github.com:ArsalJafri/instagram-tracker.git
 cd instagram-tracker
-cp .env.example .env      # then fill in DISCORD_WEBHOOK_URL
+cp .env.example .env      # then fill in DISCORD_NEW_GRAD_WEBHOOK_URL
 bash deploy/setup-linux.sh
 ```
 
