@@ -7,7 +7,7 @@ import logging
 import os
 import sys
 
-from .config import Config
+from .config import Config, deprecated_settings_in_use
 from .db import Database, is_postgres_target
 from .health import HealthState, serve_in_background
 from .heartbeat import Heartbeat
@@ -28,15 +28,25 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     config = Config.from_env()
+    for legacy, current in deprecated_settings_in_use():
+        logging.warning(
+            "%s was renamed to %s; the old name still works but will be removed. "
+            "Rename it in the environment to silence this.",
+            legacy,
+            current,
+        )
+
     if not config.discord_webhook_url:
-        logging.warning("DISCORD_WEBHOOK_URL is not set; relevant jobs will be logged only")
+        logging.warning(
+            "DISCORD_NEW_GRAD_WEBHOOK_URL is not set; relevant jobs will be logged only"
+        )
     if not config.discord_internship_webhook_url:
         logging.warning(
             "DISCORD_INTERNSHIP_WEBHOOK_URL is not set; internships will go to the main channel"
         )
 
     for name, value in (
-        ("DISCORD_MENTIONS", config.discord_mentions),
+        ("DISCORD_NEW_GRAD_MENTIONS", config.discord_mentions),
         ("DISCORD_INTERNSHIP_MENTIONS", config.discord_internship_mentions),
     ):
         bare = malformed_mentions(value)

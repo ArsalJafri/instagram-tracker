@@ -12,9 +12,51 @@ from .jobs import DEFAULT_RENDER_PROXY
 
 _TRUE = {"1", "true", "yes", "on"}
 
+# Settings renamed on 2026-08-24, old name kept working.
+#
+# `DISCORD_WEBHOOK_URL` and `DISCORD_MENTIONS` read like generic defaults but only ever
+# meant the new-grad channel, which their `INTERNSHIP` counterparts made confusing.
+# `DISCORD_UNKNOWN_WEBHOOK_URL` was worse than confusing: it was named on 2026-08-11 when
+# that channel only received pages the fetcher could not read, and since the 08-13
+# "every link surfaces" change it also takes near misses and plain rejections. The health
+# endpoint has called it `review` ever since; the setting was the last place still
+# claiming otherwise.
+#
+# Both spellings are accepted deliberately. A hard rename would mean that deploying the
+# code before updating the host's environment silently stops every alert — this project's
+# signature failure, and not one worth reintroducing over a naming tidy-up.
+RENAMED_SETTINGS = {
+    "DISCORD_NEW_GRAD_WEBHOOK_URL": "DISCORD_WEBHOOK_URL",
+    "DISCORD_NEW_GRAD_MENTIONS": "DISCORD_MENTIONS",
+    "DISCORD_REVIEW_WEBHOOK_URL": "DISCORD_UNKNOWN_WEBHOOK_URL",
+}
+
 
 def _as_bool(raw: str) -> bool:
     return raw.strip().lower() in _TRUE
+
+
+def _setting(name: str, default: str = "") -> str:
+    """Read a setting by its current name, falling back to the name it used to have."""
+    if (value := os.getenv(name)) not in (None, ""):
+        return value
+    legacy = RENAMED_SETTINGS.get(name)
+    if legacy and (value := os.getenv(legacy)) not in (None, ""):
+        return value
+    return default
+
+
+def deprecated_settings_in_use() -> list[tuple[str, str]]:
+    """Old setting names still carrying the value, as (old, new) pairs.
+
+    Reported at startup rather than corrected silently, so the environment and the
+    documentation can be brought back into agreement instead of drifting apart.
+    """
+    return [
+        (legacy, current)
+        for current, legacy in RENAMED_SETTINGS.items()
+        if not os.getenv(current) and os.getenv(legacy)
+    ]
 
 
 @dataclass(frozen=True)
@@ -68,10 +110,10 @@ class Config:
             ),
             database_path=Path(os.getenv("DATABASE_PATH", "./data/job_monitor.db")),
             database_url=os.getenv("DATABASE_URL", ""),
-            discord_webhook_url=os.getenv("DISCORD_WEBHOOK_URL", ""),
+            discord_webhook_url=_setting("DISCORD_NEW_GRAD_WEBHOOK_URL"),
             discord_internship_webhook_url=os.getenv("DISCORD_INTERNSHIP_WEBHOOK_URL", ""),
-            discord_unknown_webhook_url=os.getenv("DISCORD_UNKNOWN_WEBHOOK_URL", ""),
-            discord_mentions=os.getenv("DISCORD_MENTIONS", ""),
+            discord_unknown_webhook_url=_setting("DISCORD_REVIEW_WEBHOOK_URL"),
+            discord_mentions=_setting("DISCORD_NEW_GRAD_MENTIONS"),
             discord_internship_mentions=os.getenv("DISCORD_INTERNSHIP_MENTIONS", ""),
             heartbeat_url=os.getenv("HEARTBEAT_URL", ""),
             bio_poll_interval_seconds=int(os.getenv("BIO_POLL_INTERVAL_SECONDS", "3600")),
