@@ -47,14 +47,5 @@ services:
         sync: false
       - key: DISCORD_INTERNSHIP_MENTIONS
         sync: false
-      # Renamed 2026-08-24. Kept declared so an environment still holding the old names
-      # keeps working; the code prefers the new name and warns when it falls back.
-      # Delete these three once the dashboard has been migrated.
-      - key: DISCORD_WEBHOOK_URL
-        sync: false
-      - key: DISCORD_UNKNOWN_WEBHOOK_URL
-        sync: false
-      - key: DISCORD_MENTIONS
-        sync: false
       - key: HEARTBEAT_URL
         sync: false
