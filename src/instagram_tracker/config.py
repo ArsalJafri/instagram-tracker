@@ -101,7 +101,7 @@ class Config:
     poll_timezone: str = "America/Los_Angeles"
     quiet_hour_start: int = 23
     quiet_hour_end: int = 6
-    quiet_poll_interval_seconds: int = 600
+    quiet_poll_interval_seconds: int = 800
 
     @property
     def database_target(self) -> str | Path:
@@ -138,7 +138,7 @@ class Config:
             quiet_hour_start=int(os.getenv("QUIET_HOUR_START", "23")),
             quiet_hour_end=int(os.getenv("QUIET_HOUR_END", "6")),
             quiet_poll_interval_seconds=int(
-                os.getenv("QUIET_POLL_INTERVAL_SECONDS", "600")
+                os.getenv("QUIET_POLL_INTERVAL_SECONDS", "800")
             ),
             poor_input_confidence_penalty=float(
                 os.getenv("POOR_INPUT_CONFIDENCE_PENALTY", "0.15")

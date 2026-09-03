@@ -43,7 +43,12 @@ class HealthState:
         channels: dict | None = None,
     ) -> None:
         self._lock = threading.Lock()
+        # The floor. The effective threshold also tracks the interval the poller is
+        # currently using, because that interval is no longer constant: overnight it is
+        # deliberately much longer, and a fixed 300s floor would report a correctly
+        # idling poller as stalled — a nightly 503 at every pinger watching this.
         self.stale_after_seconds = stale_after_seconds
+        self._expected_interval: int | None = None
         # Which destinations are configured, as booleans — never the webhook URLs.
         # "Is the review channel even set up?" took four rounds of guessing to answer.
         self.channels = channels or {}
@@ -60,6 +65,16 @@ class HealthState:
         # The Postgres insert path differs from SQLite's, so it needs to be observable.
         self.corpus_recorded = 0
         self.corpus_failures = 0
+
+    def set_expected_interval(self, seconds: int) -> None:
+        """Tell the health check how long the next gap between polls should be.
+
+        Reported by the poller each tick, since the interval now varies by time of day.
+        Backoff is deliberately *not* included: while a provider is failing no poll is
+        succeeding, and that is exactly what "stalled" should catch.
+        """
+        with self._lock:
+            self._expected_interval = seconds
 
     def record_poll(self, sent: int) -> None:
         with self._lock:
@@ -97,7 +112,11 @@ class HealthState:
             since = (now - self.last_poll_at).total_seconds() if self.last_poll_at else None
             # Before the first poll, measure from startup so a cold start is not stalled.
             reference = self.last_poll_at or self.started_at
-            stalled = (now - reference).total_seconds() > self.stale_after_seconds
+            # Five missed polls, never less than the configured floor.
+            threshold = self.stale_after_seconds
+            if self._expected_interval:
+                threshold = max(threshold, self._expected_interval * 5)
+            stalled = (now - reference).total_seconds() > threshold
             return {
                 "status": "stalled" if stalled else "ok",
                 "uptime_seconds": round((now - self.started_at).total_seconds()),
@@ -105,7 +124,7 @@ class HealthState:
                 "notifications_sent": self.notifications,
                 "last_poll_at": self.last_poll_at.isoformat() if self.last_poll_at else None,
                 "seconds_since_last_poll": round(since) if since is not None else None,
-                "stale_after_seconds": self.stale_after_seconds,
+                "stale_after_seconds": threshold,
                 "last_error": self.last_error,
                 "channels": self.channels,
                 "corpus": {

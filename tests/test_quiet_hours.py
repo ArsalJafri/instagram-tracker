@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 
 import pytest
 
+from instagram_tracker.health import HealthState
 from instagram_tracker.poller import Poller, QuietHours
 
 
@@ -92,3 +93,55 @@ def test_an_empty_window_disables_the_feature():
 
 def test_no_quiet_hours_at_all_is_the_old_behaviour():
     assert Poller(None, 60)._base_interval(at(3)) == 60
+
+
+# -- the health check must not call a quiet poller stalled -------------------
+#
+# Added 2026-09-03, same day and same change that caused it. `stale_after_seconds` was
+# max(poll_interval * 5, 300) = 300s while the quiet interval was 600s, so between
+# overnight polls the endpoint reported "stalled" and answered 503 — every night, while
+# working exactly as designed, to whatever pinger was watching.
+
+
+def health_after_poll(expected_interval, seconds_ago):
+    state = HealthState(stale_after_seconds=300)
+    state.set_expected_interval(expected_interval)
+    state.record_poll(0)
+    state.last_poll_at = datetime.now(timezone.utc) - timedelta(seconds=seconds_ago)
+    return state.snapshot()
+
+
+def test_a_quiet_interval_gap_is_not_stalled():
+    """800s between polls is the schedule working, not a fault."""
+    assert health_after_poll(800, seconds_ago=790)["status"] == "ok"
+
+
+def test_daytime_sensitivity_is_not_lost():
+    """A 60s poller silent for 400s is genuinely stalled and must still say so."""
+    assert health_after_poll(60, seconds_ago=400)["status"] == "stalled"
+
+
+def test_a_quiet_poller_silent_for_five_intervals_is_stalled():
+    assert health_after_poll(800, seconds_ago=4100)["status"] == "stalled"
+
+
+def test_the_reported_threshold_reflects_the_active_interval():
+    assert health_after_poll(800, seconds_ago=10)["stale_after_seconds"] == 4000
+    assert health_after_poll(60, seconds_ago=10)["stale_after_seconds"] == 300
+
+
+def test_the_poller_reports_its_interval_to_health():
+    """The wiring, not just the arithmetic."""
+    state = HealthState(stale_after_seconds=300)
+
+    class Stub:
+        def run_once(self):
+            return 0
+
+    poller = Poller(Stub(), 60, health=state, quiet_hours=quiet(interval=800))
+    poller.tick()
+
+    # Deterministic whatever hour the suite runs at: whichever interval applies now,
+    # health must have been told about that one.
+    expected = max(300, poller._base_interval() * 5)
+    assert state.snapshot()["stale_after_seconds"] == expected

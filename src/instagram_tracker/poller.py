@@ -92,6 +92,8 @@ class Poller:
 
     def tick(self) -> int:
         """Run one cycle, swallowing provider errors so the loop survives them."""
+        if self.health:
+            self.health.set_expected_interval(self._base_interval())
         try:
             sent = self.pipeline.run_once()
         except StorySourceError as exc:
