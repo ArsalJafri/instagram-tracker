@@ -45,7 +45,11 @@ python -m instagram_tracker --once
 | `INSTAGRAM_USERNAME` | `zero2sudo` | Account whose Stories are polled |
 | `STORY_PROVIDER` | `igexport` | Story source adapter(s), comma-separated |
 | `BIO_POLL_INTERVAL_SECONDS` | `3600` | Minimum gap between direct Instagram profile fetches |
-| `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls |
+| `POLL_INTERVAL_SECONDS` | `60` | Seconds between polls during active hours |
+| `POLL_TIMEZONE` | `America/Los_Angeles` | Timezone the quiet window is measured in; an unknown name disables the window |
+| `QUIET_HOUR_START` | `23` | First hour of the slow overnight window; equal to `QUIET_HOUR_END` disables it |
+| `QUIET_HOUR_END` | `6` | First hour back on the normal interval |
+| `QUIET_POLL_INTERVAL_SECONDS` | `800` | Seconds between polls inside the quiet window |
 | `PROCESS_EXISTING_STORIES_ON_STARTUP` | `false` | If false, Stories already live on first run are recorded but never notified |
 | `DATABASE_PATH` | `./data/job_monitor.db` | SQLite file |
 | `DATABASE_URL` | — | Postgres URL; overrides `DATABASE_PATH` when set |
@@ -57,6 +61,9 @@ python -m instagram_tracker --once
 | `DISCORD_NEW_GRAD_MENTIONS` | — | Mention text prepended to new-grad alerts, e.g. `<@&123>` |
 | `DISCORD_INTERNSHIP_MENTIONS` | — | Same for internship alerts; independent of the above |
 | `HEARTBEAT_URL` | — | Optional healthchecks.io-style ping URL; see below |
+| `ROLE_CONFIDENCE_THRESHOLD` | `0.60` | Confidence the software-role axis must reach to route anywhere but review |
+| `EMPLOYMENT_CONFIDENCE_THRESHOLD` | `0.55` | Same for the internship/full-time axis |
+| `POOR_INPUT_CONFIDENCE_PENALTY` | `0.15` | Added to both thresholds when the fetcher recovered little text |
 
 ### Renamed settings
 
@@ -70,12 +77,35 @@ without downtime. They will be removed once no deployment relies on them.
 | `DISCORD_MENTIONS` | `DISCORD_NEW_GRAD_MENTIONS` | Same, and asymmetric with its `INTERNSHIP` counterpart |
 | `DISCORD_UNKNOWN_WEBHOOK_URL` | `DISCORD_REVIEW_WEBHOOK_URL` | Named when the channel only took unreadable pages; it has taken near misses and plain rejections since routing became exhaustive |
 
+## Polling schedule
+
+Active hours poll every `POLL_INTERVAL_SECONDS` (60). Between `QUIET_HOUR_START` and
+`QUIET_HOUR_END` in `POLL_TIMEZONE` — 23:00 to 06:00 Pacific — polling drops to
+`QUIET_POLL_INTERVAL_SECONDS` (800), about **27% fewer requests a day**.
+
+The window is measured, not assumed. Across 96 Stories in two samples a month apart:
+
+| Hours (Pacific) | 2026-08-09..11 | 2026-09-02..03 |
+| --- | --- | --- |
+| 23:00–05:59 | 0 | 0 |
+| 06:00–22:59 | 59 | 37 |
+
+Not one Story overnight in either sample, so the expected latency cost is near zero. The
+samples disagree about where the daily peak sits, so there is deliberately no third
+"peak" tier — that would be fitting noise rather than following it.
+
+The window is wall-clock in a named timezone and follows daylight saving on its own; a
+fixed UTC offset would drift an hour twice a year. An unrecognised `POLL_TIMEZONE` fails
+open — the window is disabled and everything polls at the normal interval, because
+polling too often costs a wasted request while polling too rarely misses a posting.
+Failure backoff multiplies whichever interval is current.
+
 ## What counts as relevant
 
 A posting qualifies when it is software-related **and** either entry-level/new-grad or an
 internship. Each relevant job is tagged with a `role_type` that decides where it goes:
 
-| Role type | Signals (title or `employmentType` only) | Channel |
+| Role type | Signals (title, or `employmentType` where it is not contradicted) | Channel |
 | --- | --- | --- |
 | `internship` | `intern`, `internship`, `co-op`, `coop` | `DISCORD_INTERNSHIP_WEBHOOK_URL` |
 | `new_grad` | `new grad`, `entry level`, `early career`, `associate`, `engineer i/ii`, … | `DISCORD_NEW_GRAD_WEBHOOK_URL` |
@@ -85,6 +115,14 @@ description — postings routinely mention unrelated internship programmes, whic
 mislabel full-time roles. Seniority negatives still win, so "Senior Software Engineering
 Intern" is rejected. `contract`, `part-time` and schema.org's own `employmentType`
 spellings (`contractor`, `part_time`, `temporary`) all reject outright.
+
+**An `INTERN` title beats a `FULL_TIME` declaration.** `employmentType` answers *how many
+hours*, not *is this a permanent role*, and the two only look like one question. A summer
+internship genuinely is full-time, so Workday and Microsoft's ATS emit `FULL_TIME` for
+interns truthfully. Believed at face value, that routed "AI Software Engineering Intern"
+to the new-grad channel for eleven days. A saturated intern title now vetoes the
+`FULL_TIME` branch; a declared `INTERN` is still trusted outright, since an employer that
+bothers to say `INTERN` is not the one getting this wrong.
 
 Numbered junior titles count as entry-level — `Software Engineer I/II` is exactly how
 large employers denote it. The signals are scoped to follow a role word (`engineer i`,
@@ -282,9 +320,10 @@ launchd agent is not installed. This section applies to local development, or to
 on hardware you own.
 
 **Heartbeat.** Set `HEARTBEAT_URL` to a healthchecks.io ping URL. Every successful poll
-pings it; every failed poll pings `<url>/fail`. Configure the check's period to a few
-minutes above `POLL_INTERVAL_SECONDS` and the external service alerts you when the pings
-stop. Ping failures are logged and swallowed, so the monitor can never stop the tracker.
+pings it; every failed poll pings `<url>/fail`. Configure the check's period a few minutes
+above `QUIET_POLL_INTERVAL_SECONDS` — not `POLL_INTERVAL_SECONDS` — or it will alert every
+night when the poller is idling on purpose. The external service then alerts you when the
+pings genuinely stop. Ping failures are logged and swallowed, so the monitor can never stop the tracker.
 
 **Supervision.** `deploy/com.arsaljafri.instagram-tracker.plist` runs the poller under
 launchd: started at login, restarted if it crashes, logging to `logs/tracker.log`.
@@ -346,9 +385,12 @@ verb without a handler. Without `do_HEAD` the endpoint looks permanently down to
 thing watching it — which is exactly what happened on first deployment, while `curl`
 (a GET) reported everything healthy.
 
-**It returns 503 once polling has stalled** — no successful poll for five poll intervals
-(minimum 300s). A process that is alive but no longer polling is the failure worth
-catching, and a permanent 200 would hide it. Because the failure shows up in the status
+**It returns 503 once polling has stalled** — no successful poll for five poll intervals,
+never less than 300s. The threshold follows the interval actually in use, so it is 300s
+during active hours and 4000s inside the quiet window; `stale_after_seconds` in the
+payload reports the value being applied rather than a constant. Without that the endpoint
+would answer 503 every night while idling exactly as designed. A process that is alive but
+no longer polling is the failure worth catching, and a permanent 200 would hide it. Because the failure shows up in the status
 code, an ordinary uptime check becomes a real liveness check, and UptimeRobot doubles as
 the heartbeat with nothing else to configure.
 
@@ -397,8 +439,10 @@ Steps:
 **Use 5 minutes, not 15.** Fifteen is exactly Render's spin-down threshold, leaving no
 margin: checks drift, and one delayed or failed request lets the service sleep. Five
 gives roughly three pings per window, so two can fail harmlessly. It also matches the
-300-second stall threshold, so a stalled poller surfaces in 5–10 minutes instead of up
-to half an hour. Sleep is not merely a slow first request — polling is stopped the whole
+300-second active-hours stall threshold, so a stalled poller surfaces in 5–10 minutes
+instead of up to half an hour. Overnight the threshold widens with the interval, so a
+stall between 23:00 and 06:00 Pacific takes longer to surface — the deliberate cost of
+not crying wolf every night. Sleep is not merely a slow first request — polling is stopped the whole
 time, and a job posted in that window is never seen.
 
 Verify the deploy by watching the logs for `State: PostgreSQL`. If it says
@@ -431,7 +475,7 @@ Render triggers a redeploy, which resets it.
 
 | Symptom | Meaning |
 | --- | --- |
-| `HTTP 503` | Alive but no successful poll in 5 minutes — stall detection firing |
+| `HTTP 503` | Alive but no successful poll for five intervals — 5 minutes in active hours, ~66 minutes in the quiet window |
 | Timeout or connection refused | Asleep or down; the first request wakes it after ~1 minute |
 | `polls` unchanged across readings | Stalled, despite returning 200 |
 | `uptime_seconds` repeatedly resetting | Crash looping — read the dashboard logs |
