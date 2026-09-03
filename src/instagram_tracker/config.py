@@ -92,6 +92,16 @@ class Config:
     # Added to both thresholds when the fetcher recovered little text. A slug posting is
     # a handful of words off a URL path; scoring it confidently is overconfidence.
     poor_input_confidence_penalty: float = 0.15
+    # Quiet hours, in `poll_timezone`, polled at `quiet_poll_interval_seconds` instead of
+    # the normal interval. Derived from observation, not assumption: across 96 Stories in
+    # two samples a month apart (59 on 2026-08-09..11, 37 on 2026-09-02..03) not one was
+    # posted between 23:00 and 06:00 Pacific. The two samples disagree about where the
+    # daily peak sits, so there is deliberately no third "peak" tier — that would be
+    # fitting noise. Start == end disables the quiet window.
+    poll_timezone: str = "America/Los_Angeles"
+    quiet_hour_start: int = 23
+    quiet_hour_end: int = 6
+    quiet_poll_interval_seconds: int = 600
 
     @property
     def database_target(self) -> str | Path:
@@ -123,6 +133,12 @@ class Config:
             ),
             employment_confidence_threshold=float(
                 os.getenv("EMPLOYMENT_CONFIDENCE_THRESHOLD", "0.55")
+            ),
+            poll_timezone=os.getenv("POLL_TIMEZONE", "America/Los_Angeles"),
+            quiet_hour_start=int(os.getenv("QUIET_HOUR_START", "23")),
+            quiet_hour_end=int(os.getenv("QUIET_HOUR_END", "6")),
+            quiet_poll_interval_seconds=int(
+                os.getenv("QUIET_POLL_INTERVAL_SECONDS", "600")
             ),
             poor_input_confidence_penalty=float(
                 os.getenv("POOR_INPUT_CONFIDENCE_PENALTY", "0.15")

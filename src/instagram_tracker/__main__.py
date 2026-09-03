@@ -13,7 +13,7 @@ from .health import HealthState, serve_in_background
 from .heartbeat import Heartbeat
 from .notifier import malformed_mentions
 from .pipeline import build_pipeline
-from .poller import Poller
+from .poller import Poller, QuietHours
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -81,6 +81,12 @@ def main(argv: list[str] | None = None) -> int:
             config.poll_interval_seconds,
             heartbeat=Heartbeat(config.heartbeat_url),
             health=health,
+            quiet_hours=QuietHours(
+                config.poll_timezone,
+                config.quiet_hour_start,
+                config.quiet_hour_end,
+                config.quiet_poll_interval_seconds,
+            ),
         )
         if args.once:
             poller.tick()

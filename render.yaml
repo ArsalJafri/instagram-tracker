@@ -30,6 +30,17 @@ services:
         value: "60"
       - key: BIO_POLL_INTERVAL_SECONDS
         value: "3600"
+      # Overnight the account does not post: 0 of 96 observed Stories fell between
+      # 23:00 and 06:00 Pacific, across two samples a month apart. Polled every 10
+      # minutes instead of every minute, which is ~26% fewer requests a day.
+      - key: POLL_TIMEZONE
+        value: America/Los_Angeles
+      - key: QUIET_HOUR_START
+        value: "23"
+      - key: QUIET_HOUR_END
+        value: "6"
+      - key: QUIET_POLL_INTERVAL_SECONDS
+        value: "600"
       - key: PROCESS_EXISTING_STORIES_ON_STARTUP
         value: "false"
       - key: RENDER_PROXY_URL
